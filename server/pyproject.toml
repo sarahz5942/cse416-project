@@ -12,3 +12,5 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["F401"]  # allow unused imports in tests (fixtures, etc.)
+[tool.pytest.ini_options]
+pythonpath = ["."]  # lets tests do `from integrations... import ...`

@@ -8,26 +8,39 @@ on:
 jobs:
   server:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: campusreserve_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install dependencies
         working-directory: server
         run: |
           pip install -r requirements.txt
           pip install ruff pytest
-
       - name: Lint
         working-directory: server
         run: ruff check .
-
       - name: Run tests
         working-directory: server
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/campusreserve_test
+          JWT_SECRET_KEY: test-secret-not-for-production
         run: pytest
 
   frontend:

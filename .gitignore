@@ -24,3 +24,5 @@ build/
 .idea/
 .vscode/
 *.swp
+
+server/data

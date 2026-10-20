@@ -9,6 +9,9 @@ psycopg[binary]
 # Auth
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt<4.1
+pydantic[email]
+python-multipart
 
 # Config
 python-dotenv
@@ -16,3 +19,4 @@ python-dotenv
 # Dev / CI
 pytest
 ruff
+httpx

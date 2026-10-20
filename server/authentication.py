@@ -3,37 +3,51 @@
 from datetime import datetime, timedelta, timezone
 import os
 
+import bcrypt
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, SecurityScopes
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from .database import get_db
-from .models.user import User
-from .auth.scopes import SCOPES
-from .auth.roles import ROLES
+from database import get_db
+from models.user import User
+from access_control.scopes import SCOPES
+from access_control.roles import ROLES
 
 SECRET_KEY = os.environ["JWT_SECRET_KEY"]
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 # --- Password hashing (NFR-3) ---
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# CHANGED: uses the bcrypt package directly instead of passlib. passlib is
+# unmaintained and crashes with bcrypt 4.1+ ("password cannot be longer than
+# 72 bytes") during its own startup self-test. The hashes are the same
+# standard bcrypt format, so existing hashes still verify.
+# bcrypt only looks at the first 72 bytes of a password; we truncate
+# explicitly, which is what passlib used to do silently.
+BCRYPT_MAX_BYTES = 72
+
+
+def _password_bytes(plain: str) -> bytes:
+    return plain.encode("utf-8")[:BCRYPT_MAX_BYTES]
 
 
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+    return bcrypt.hashpw(_password_bytes(plain), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(_password_bytes(plain), hashed.encode("utf-8"))
+    except ValueError:  # malformed stored hash
+        return False
 
 
 # --- OAuth2 scheme, wired to the scope catalog so it shows in the API docs ---
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="token",
+    tokenUrl="auth/token",  # FIXED: was "token"; the login route is /auth/token
     scopes={name: meta["description"] for name, meta in SCOPES.items()},
 )
 
@@ -95,6 +109,10 @@ async def get_current_user(
         user_id = payload.get("sub")
         token_scopes = payload.get("scopes", [])
         if user_id is None:
+            raise credentials_exception
+        # Special-purpose tokens (e.g. calendar feed links, see routers/me.py)
+        # are signed with the same key but must never work as a login.
+        if payload.get("purpose"):
             raise credentials_exception
     except (JWTError, ValidationError):
         raise credentials_exception

@@ -17,7 +17,7 @@ CampusReserve is designed to improve the room-booking experience specifically fo
 
 ## 2. Users and Audience
 
-CampusReserve will serve two types of users who will have different specific needs and permissions. Separating these roles will be important for maintaining security and making sure access is given to the appropriate people.
+CampusReserve will serve three types of users who will have different specific needs and permissions. Separating these roles will be important for maintaining security and making sure access is given to the appropriate people.
 
 | Role | Who they are | What they do in CampusReserve |
 |------|-------------|--------------------------|

@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, Boolean
+from sqlalchemy import Column, DateTime, Enum, String, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -29,15 +29,18 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
 
     role = Column(
-        Enum(UserRole, name="user_role"),
+        # See room.py's `status` column for why values_callable is needed --
+        # this stores "club_leader"/"admin"/... instead of "CLUB_LEADER".
+        Enum(
+            UserRole,
+            name="user_role",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
         nullable=False,
         default=UserRole.CLUB_LEADER,
     )
 
-    # E-board membership is verified before a leader gains booking rights (NFR-1).
-    is_verified = Column(Boolean, nullable=False, default=False)
-
-    # Access can be scoped to a term / deactivated (NFR-2, least privilege).
+    # Access can be scoped / deactivated entirely (NFR-2, least privilege).
     is_active = Column(Boolean, nullable=False, default=True)
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -45,19 +48,30 @@ class User(Base):
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    # TODO update below, want organization and venue as well.
-    # --- relationships (defined on the related models via back_populates) ---
-    # requests = relationship("Request", back_populates="requester")
-    # A club leader belongs to one organization (nullable — admins/hosts have none).
-    organization_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("organizations.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    organization = relationship("Organization", back_populates="leaders")
+    # --- relationships ---
 
-    # Venue hosts ↔ venues (many-to-many via the venue_hosts table).
+    # CHANGED: a single `organization_id` FK only allows one leader per org and
+    # one org per leader, and had nowhere to put position/term/verification.
+    # A club leader can now belong to several organizations (and an org has many
+    # leaders) through OrganizationMember, which also carries per-org
+    # verification (NFR-1) and term dates (NFR-2). See organization_and_venue.py.
+    # foreign_keys is required here: OrganizationMember has TWO foreign keys
+    # pointing at `users` (user_id, and verified_by_id -- who verified them),
+    # so SQLAlchemy can't guess which one this relationship should follow
+    # without being told explicitly.
+    organization_memberships = relationship(
+        "OrganizationMember",
+        back_populates="user",
+        foreign_keys="OrganizationMember.user_id",
+        cascade="all, delete-orphan",
+    )
+
+    # Venue hosts <-> venues (many-to-many via the venue_hosts table). Unchanged.
     venues = relationship("Venue", secondary="venue_hosts", back_populates="hosts")
+
+    requests = relationship(
+        "Request", back_populates="requester", foreign_keys="Request.requester_id"
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.email} ({self.role.value})>"
