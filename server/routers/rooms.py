@@ -165,12 +165,28 @@ def _count_by_room(db: Session, *conditions) -> dict[str, int]:
     return {_public_id(ref, rid): n for ref, rid, n in rows}
 
 
+def _done_with_db(db: Session) -> None:
+    """Give the database connection back to the pool.
+
+    Call this after a request's last query when it's about to wait on 25Live.
+    Otherwise the connection stays checked out for the whole (sometimes long)
+    25Live call, and a few slow requests can use up the pool's 15 connections,
+    after which every request, even logging in, times out.
+    Ending the transaction with commit (not rollback) keeps anything the request
+    already added, which matters in the tests, where test data isn't committed yet.
+    If the request queries again later, the session checks out a connection again.
+    """
+    db.commit()
+
+
 def _room_list_data(db: Session):
-    return (
+    data = (
         _db_rooms(db),
         _count_by_room(db, Request.status == RequestStatus.PENDING),
         _count_by_room(db, Request.status == RequestStatus.WAITLISTED),
     )
+    _done_with_db(db)
+    return data
 
 
 def _find_room(db: Session, public_id: str) -> Room | None:
@@ -201,6 +217,7 @@ def _request_dict(r: Request) -> dict:
 def _schedule_data(db: Session, public_id: str, start: dt.datetime, end: dt.datetime):
     room = _find_room(db, public_id)
     if room is None:
+        _done_with_db(db)
         return None, [], [], []
 
     # Requests whose blocked window (start/end widened by setup/cleanup)
@@ -234,6 +251,7 @@ def _schedule_data(db: Session, public_id: str, start: dt.datetime, end: dt.date
     closure_dicts = [{"name": c.reason, "start": to_local_naive(c.closed_from),
                       "end": to_local_naive(c.closed_until)} for c in closures]
 
+    _done_with_db(db)
     return room, requests, waitlisted, closure_dicts
 
 
@@ -279,6 +297,7 @@ def _availability_db_data(db: Session, start: dt.datetime, end: dt.datetime):
         ):
             blocked.add(_public_id(ref, rid))
 
+    _done_with_db(db)
     return blocked, pending_counts
 
 
@@ -379,10 +398,10 @@ async def _available_rooms(db: Session, start: dt.datetime, end: dt.datetime,
     Shared by /available and /search so both use the same availability rules.
     """
     now = campus_now()
-    (all_rooms, (blocked, pending_counts)) = await asyncio.gather(
-        _merged_rooms(db),
-        run_in_threadpool(_availability_db_data, db, start, end),
-    )
+    # One database query at a time: a Session can't be used by two threads at once.
+    # This one is quick; _merged_rooms then queries again while it waits on 25Live.
+    blocked, pending_counts = await run_in_threadpool(_availability_db_data, db, start, end)
+    all_rooms = await _merged_rooms(db)
     picked = pick(all_rooms)
     if inspect.isawaitable(picked):
         picked = await picked
@@ -655,10 +674,12 @@ async def room_photo(
 @router.get("/{room_id}/details", response_model=RoomDetailResponse)
 async def get_room_details(
     room_id: str,
+    db: Session = Depends(get_db),   # the same session the login check used
     current_user: User = Security(get_current_user, scopes=["read:rooms"]),
 ):
     """25Live's details for a room: equipment, categories, hours, the room's
     rules/instructions, location, and the feature tags we derive from them."""
+    await run_in_threadpool(_done_with_db, db)   # nothing else here needs the database
     if not room_id.isdigit():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Only 25Live rooms have 25Live details.")
