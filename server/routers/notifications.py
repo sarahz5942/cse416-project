@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,7 @@ from authentication import get_current_user
 from database import get_db
 from models.communication import Notification
 from models.user import User
+from services.pagination import Page, paged
 from services.permissions import as_uuid
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -34,16 +35,19 @@ def _out(n: Notification) -> NotificationOut:
 
 @router.get("", response_model=list[NotificationOut])
 def list_notifications(
+    response: Response,
     unread_only: bool = False,
-    limit: int = Query(50, ge=1, le=200),
+    page: Page = Depends(paged(default_limit=50, max_limit=200)),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user),
 ):
-    """Your notifications, newest first."""
+    """Your notifications, newest first.
+    Paginate with ?limit=&offset= (the total is in the X-Total-Count header)."""
     q = db.query(Notification).filter(Notification.user_id == user.id)
     if unread_only:
         q = q.filter(Notification.is_read.is_(False))
-    return [_out(n) for n in q.order_by(Notification.created_at.desc()).limit(limit).all()]
+    q = q.order_by(Notification.created_at.desc(), Notification.id)
+    return [_out(n) for n in page.query(q, response).all()]
 
 
 @router.get("/unread-count")

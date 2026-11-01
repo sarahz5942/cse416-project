@@ -18,6 +18,7 @@ from database import get_db
 from models.communication import Conversation, ConversationParticipant, Message, NotificationType
 from models.user import User
 from services.notify import notify
+from services.pagination import Page, paged
 from services.permissions import as_uuid
 
 router = APIRouter(tags=["messages"])
@@ -126,8 +127,9 @@ def _my_conversation(db: Session, user: User, conversation_id: str) -> Conversat
 
 @router.get("/users/search", response_model=list[PersonOut])
 def search_users(
+    response: Response,
     q: str = Query(..., min_length=1, max_length=100, description="Name or email contains"),
-    limit: int = Query(10, ge=1, le=50),
+    page: Page = Depends(paged(default_limit=10, max_limit=50)),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["read:messages"]),
 ):
@@ -139,7 +141,8 @@ def search_users(
             .filter(User.is_active.is_(True), User.id != user.id,
                     or_(func.lower(User.name).contains(term, autoescape=True),
                         func.lower(User.email).contains(term, autoescape=True)))
-            .order_by(User.name).limit(limit).all())
+            .order_by(User.name, User.id))
+    rows = page.query(rows, response).all()
     return [PersonOut(id=str(u.id), name=u.name, email=u.email) for u in rows]
 
 
@@ -149,6 +152,8 @@ def search_users(
 
 @router.get("/conversations", response_model=list[ConversationOut])
 def list_conversations(
+    response: Response,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["read:messages"]),
 ):
@@ -158,7 +163,7 @@ def list_conversations(
              .filter(ConversationParticipant.user_id == user.id)
              .options(*_load_options()).all())
     convs.sort(key=lambda c: c.messages[-1].created_at if c.messages else c.created_at, reverse=True)
-    return [conversation_out(c) for c in convs]
+    return [conversation_out(c) for c in page.items(convs, response)]
 
 
 @router.post("/conversations", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
