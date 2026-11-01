@@ -13,7 +13,7 @@ name: Keep Render awake
 
 on:
   schedule:
-    - cron: "*/10 * * * *"     # every 10 minutes (times are UTC; GitHub may run it a bit late)
+    - cron: "3,13,23,33,43,53 * * * *"   # every 10 min, avoiding the busy round minutes
   workflow_dispatch:            # adds a "Run workflow" button
 
 concurrency:
