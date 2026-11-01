@@ -4,6 +4,7 @@ import Pill from '../components/Pill.jsx';
 import LoadingScreen from '../components/LoadingScreen.jsx';
 import Feature from '../components/Feature.jsx';
 import RoomPhoto from '../components/RoomPhoto.jsx';
+import { LIVE, availableRooms } from '../api.js';
 import useDialog from '../a11y/useDialog.js';
 import { useIsPhone, useScrollLock } from '../useMedia.js';
 
@@ -16,6 +17,23 @@ export default function FindSpace({ onView, onBook, rooms = ROOMS, loading = fal
   const allFeatures = useMemo(()=> rooms===ROOMS ? ALL_FEATURES : [...new Set(rooms.flatMap(r=>r.features))].sort(),[rooms]);
   const [q,setQ]=useState(""); const [building,setBuilding]=useState(BUILDINGS[0]); const [type,setType]=useState(TYPES[0]);
   const [minCap,setMinCap]=useState(0);
+  // "Available on" filter: date + from + to (live mode only)
+  const [date,setDate]=useState(""); const [from,setFrom]=useState(""); const [to,setTo]=useState("");
+  const [showTaken,setShowTaken]=useState(false);
+  const todayStr = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
+  const timeSet = LIVE && !!date && !!from && !!to && to > from;
+  const [avail,setAvail]=useState({ map:null, loading:false, error:"" });
+  useEffect(() => {
+    if (!timeSet) { setAvail({ map:null, loading:false, error:"" }); return; }
+    let off = false;
+    setAvail({ map:null, loading:true, error:"" });
+    availableRooms({ date, from, to })
+      .then(list => { if (!off) setAvail({ map:new Map(list.map(r => [String(r.id), r.overlapping_pending_requests || 0])), loading:false, error:"" }); })
+      .catch(e => { if (!off) setAvail({ map:null, loading:false, error:e.message }); });
+    return () => { off = true; };
+  }, [timeSet, date, from, to]);
+  // booked = not free (25Live or an approved booking); requested = free, but another club has a pending request
+  const takenKind = r => !avail.map ? null : !avail.map.has(String(r.id)) ? "booked" : avail.map.get(String(r.id)) > 0 ? "requested" : null;
   const [picked,setPicked]=useState([]); const [fq,setFq]=useState("");
   const [page,setPage]=useState(1);
   const toggle = f => setPicked(p => p.includes(f) ? p.filter(x=>x!==f) : [...p,f]);
@@ -27,11 +45,12 @@ export default function FindSpace({ onView, onBook, rooms = ROOMS, loading = fal
     if (type!==TYPES[0] && r.type!==type) return false;
     if (minCap && r.cap < minCap) return false;
     if (!picked.every(f => r.features.includes(f))) return false;
+    if (avail.map && (takenKind(r) || r.closed) && !showTaken) return false;
     return true;
-  }),[rooms,q,building,type,minCap,picked]);
+  }),[rooms,q,building,type,minCap,picked,avail.map,showTaken]);
 
   // Back to page 1 whenever the filters (or the room list) change.
-  useEffect(() => setPage(1), [rooms,q,building,type,minCap,picked]);
+  useEffect(() => setPage(1), [rooms,q,building,type,minCap,picked,avail.map,showTaken]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, pageCount);
   const shown = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
@@ -90,6 +109,35 @@ export default function FindSpace({ onView, onBook, rooms = ROOMS, loading = fal
             style={{ width:"100%", margin:"6px 0 4px", padding:"9px 11px", fontSize:14.5, border:"2px solid var(--ink)",
             borderRadius:8, background:"var(--paper)", outline:"none" }} />
 
+          {LIVE && (
+            <div style={{ marginTop:16, paddingTop:14, borderTop:"1px solid var(--line)" }}>
+              <label style={{ fontSize:13, fontWeight:600, color:"var(--ink-soft)" }}>Available on</label>
+              <input type="date" min={todayStr} value={date} onChange={e=>setDate(e.target.value)}
+                style={{ width:"100%", margin:"6px 0 10px", padding:"9px 11px", fontSize:14.5, border:"2px solid var(--ink)", borderRadius:8, background:"var(--paper)", outline:"none" }} />
+              <div style={{ display:"flex", gap:8 }}>
+                <div style={{ flex:1 }}>
+                  <label style={{ fontSize:13, fontWeight:600, color:"var(--ink-soft)" }}>From</label>
+                  <input type="time" step="900" value={from} onChange={e=>setFrom(e.target.value)}
+                    style={{ width:"100%", margin:"6px 0 8px", padding:"9px 8px", fontSize:14.5, border:"2px solid var(--ink)", borderRadius:8, background:"var(--paper)", outline:"none" }} />
+                </div>
+                <div style={{ flex:1 }}>
+                  <label style={{ fontSize:13, fontWeight:600, color:"var(--ink-soft)" }}>To</label>
+                  <input type="time" step="900" value={to} onChange={e=>setTo(e.target.value)}
+                    style={{ width:"100%", margin:"6px 0 8px", padding:"9px 8px", fontSize:14.5, border:"2px solid var(--ink)", borderRadius:8, background:"var(--paper)", outline:"none" }} />
+                </div>
+              </div>
+              {date && from && to && to <= from && <div role="alert" style={{ fontSize:13.5, color:"var(--red)", fontWeight:600, marginBottom:6 }}>The end time must be after the start time.</div>}
+              {avail.error && <div role="alert" style={{ fontSize:13.5, color:"var(--red)", fontWeight:600, marginBottom:6 }}>{avail.error}</div>}
+              {!date && !from && !to && <div style={{ fontSize:13, color:"var(--ink-faint)", marginBottom:6 }}>Pick a date and time to see only the rooms that are free then.</div>}
+              <label style={{ display:"flex", alignItems:"flex-start", gap:9, fontSize:14, cursor:"pointer", marginTop:4 }}>
+                <input type="checkbox" checked={showTaken} onChange={e=>setShowTaken(e.target.checked)} style={{ marginTop:3, accentColor:"var(--blue)" }} />
+                <span>Also show rooms that are booked or requested then (you can join their waitlist)</span>
+              </label>
+              {(date || from || to) && <button onClick={()=>{ setDate(""); setFrom(""); setTo(""); }}
+                style={{ fontSize:13, fontWeight:600, color:"var(--link)", marginTop:8 }}>Clear date and time</button>}
+            </div>
+          )}
+
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", margin:"18px 0 6px" }}>
             <label style={{ fontSize:13, fontWeight:600, color:"var(--ink-soft)" }}>
               Features{picked.length>0 && ` (${picked.length} selected)`}
@@ -118,14 +166,15 @@ export default function FindSpace({ onView, onBook, rooms = ROOMS, loading = fal
 
         <div style={{ flex:1, minWidth:280, display:"grid", gap:14 }}>
           {loading && <LoadingScreen inline label="Loading spaces from 25Live…" />}
-          {!loading && filtered.length===0 && <div style={{ textAlign:"center", padding:"50px 20px", color:"var(--ink-faint)",
-            background:"var(--card)", borderRadius:14, border:"2px dashed var(--ink-faint)" }}>No spaces match those filters.</div>}
-          {!loading && filtered.length>0 && (
+          {!loading && avail.loading && <LoadingScreen inline label="Checking which rooms are free…" />}
+          {!loading && !avail.loading && filtered.length===0 && <div style={{ textAlign:"center", padding:"50px 20px", color:"var(--ink-faint)",
+            background:"var(--card)", borderRadius:14, border:"2px dashed var(--ink-faint)" }}>{avail.map ? "No spaces are free then. Try another time, or tick the box to see booked rooms you can waitlist." : "No spaces match those filters."}</div>}
+          {!loading && !avail.loading && filtered.length>0 && (
             <div style={{ fontSize:14, color:"var(--ink-faint)" }}>
               Showing {(current-1)*PAGE_SIZE+1}–{Math.min(current*PAGE_SIZE, filtered.length)} of {filtered.length} spaces
             </div>
           )}
-          {shown.map(r => (
+          {!avail.loading && shown.map(r => (
             <div key={r.id} className="room-card" onClick={()=>!r.closed && onView(r)} style={{ display:"flex", gap:18, flexWrap:"wrap", background:"var(--card)", border:"2px solid var(--ink)",
               borderRadius:14, padding:18, boxShadow:"var(--shadow)", opacity:r.closed?0.65:1, cursor:r.closed?"default":"pointer",
               borderLeft:`4px solid ${STATUS[r.status].fg}` }}>
@@ -136,7 +185,12 @@ export default function FindSpace({ onView, onBook, rooms = ROOMS, loading = fal
                   <h3 style={{ fontSize:18, fontWeight:700 }}>{r.name}</h3>
                   <div style={{ fontSize:14, color:"var(--ink-faint)" }}>{r.building} · Holds {r.cap} · {r.type}</div>
                 </div>
-                <Pill status={r.status} />
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
+                  <Pill status={r.status} />
+                  {takenKind(r) && <span style={{ fontSize:12.5, fontWeight:700, padding:"3px 9px", borderRadius:999,
+                    background: takenKind(r)==="booked" ? "var(--red-wash)" : "var(--amber-wash)", color: takenKind(r)==="booked" ? "var(--red)" : "var(--ink)" }}>
+                    {takenKind(r)==="booked" ? "Booked at this time" : "Requested at this time"}</span>}
+                </div>
               </div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:6, margin:"12px 0" }}>
                 {r.features.slice(0,5).map(f=><Feature key={f}>{f}</Feature>)}
@@ -147,14 +201,14 @@ export default function FindSpace({ onView, onBook, rooms = ROOMS, loading = fal
               {!r.closed && (
                 <div className="room-card-actions" style={{ display:"flex", gap:14, alignItems:"center" }}>
                   <span style={{ fontSize:14.5, fontWeight:600, color:"var(--link)" }}>View room details ›</span>
-                  <button onClick={e=>{ e.stopPropagation(); onBook(r); }} style={{ marginLeft:"auto", padding:"8px 16px",
-                    borderRadius:8, fontSize:14, fontWeight:600, color:"var(--ink)", background:"var(--blue)" }}>Book</button>
+                  <button onClick={e=>{ e.stopPropagation(); onBook(timeSet ? { ...r, prefill:{ date, from, to } } : r); }} style={{ marginLeft:"auto", padding:"8px 16px",
+                    borderRadius:8, fontSize:14, fontWeight:600, color:"var(--ink)", background:"var(--blue)" }}>{takenKind(r) ? "Join waitlist" : "Book"}</button>
                 </div>
               )}
               </div>
             </div>
           ))}
-          {pageCount > 1 && (
+          {pageCount > 1 && !avail.loading && (
             <nav aria-label="Room pages" style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:12, marginTop:6 }}>
               <button onClick={()=>goTo(current-1)} disabled={current===1} style={pageBtn(current===1)}>‹ Previous</button>
               <span style={{ fontSize:14, fontWeight:600 }} aria-current="page">Page {current} of {pageCount}</span>

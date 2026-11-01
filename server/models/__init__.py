@@ -17,6 +17,7 @@ from .organization_and_venue import (
 )
 
 from .room import Room, RoomClosure, Request, RequestStatus, SyncStatus
+from .room_comment import RoomComment
 
 from .communication import (
     Conversation,
@@ -41,6 +42,7 @@ __all__ = [
     "Request",
     "RequestStatus",
     "SyncStatus",
+    "RoomComment",
     "Conversation",
     "ConversationParticipant",
     "Message",

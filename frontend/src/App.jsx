@@ -361,7 +361,7 @@ export default function App() {
         onProfile={()=>goPage("profile")} unread={unreadTotal} verifCount={verifs.length} name={profiles[role].name} onLogout={logout} />
       {apiError && <div role="alert" className="app-banner" style={{ maxWidth:900, margin:"14px auto 0", padding:"10px 16px", background:"var(--red-wash)", color:"var(--red)", border:"2px solid var(--red)", borderRadius:10, fontWeight:600, fontSize:14.5 }}>{apiError}</div>}
 
-      {role==="leader" && memLoaded && leaderOrgs.length===0 && page!=="profile" && (
+      {role==="leader" && !dataLoading && memLoaded && leaderOrgs.length===0 && page!=="profile" && (
         <div role="status" className="app-banner" style={{ maxWidth:900, margin:"14px auto 0", padding:"10px 16px", background:"var(--amber-wash)", border:"2px solid var(--amber)",
           borderRadius:10, fontWeight:600, fontSize:14.5, color:"var(--ink)", display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
           <span style={{ flex:1, minWidth:200 }}>Your account is not verified yet, so you can't request bookings.</span>
@@ -373,7 +373,7 @@ export default function App() {
         <ClubProfile name={viewingClub} clubs={clubs} requests={requests} selfId={selfId} onBack={()=>back("/clubs")} onMessagePerson={messagePerson} />
       ) : viewingRoomId!=null ? (
         viewingRoom
-          ? <RoomDetail room={viewingRoom} onBack={()=>back("/find")} onBook={setOpenRoom} />
+          ? <RoomDetail room={viewingRoom} onBack={()=>back("/find")} onBook={setOpenRoom} role={role} orgs={leaderOrgs} orgIds={orgIds} />
           : <main className="page" style={{ maxWidth:900, margin:"0 auto", padding:"24px", fontWeight:600 }}>
               {roomsLoading ? "Loading room…" : <>Room not found. <button onClick={()=>navigate("/find")} style={{ color:"var(--link)", fontWeight:700 }}>Back to search</button></>}
             </main>

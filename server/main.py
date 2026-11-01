@@ -6,10 +6,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import get_db
-from routers import admin, analytics, auth, me, forum, messages, notifications, organizations, requests, rooms, waitlist
+from routers import admin, analytics, auth, me, forum, messages, notifications, organizations, requests, room_comments, rooms, waitlist
 from services import live25
 from services.request_flow import run_waitlist_loop
 from services.usage import UsageMiddleware, flush, flush_loop
+
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)  # don't log every 25Live request
@@ -50,6 +51,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(rooms.router)
+app.include_router(room_comments.router)
 app.include_router(requests.router)
 app.include_router(waitlist.router)
 app.include_router(organizations.router)

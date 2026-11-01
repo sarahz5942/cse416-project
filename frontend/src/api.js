@@ -78,6 +78,21 @@ export const rooms = () => call("/rooms");
 export const roomSchedule = (id, startKey, endKey) =>
   call(`/rooms/${encodeURIComponent(id)}/schedule?start=${startKey}&end=${endKey}`);
 
+// Rooms that are free for a whole window. Rooms missing from the list are taken;
+// rooms with overlapping_pending_requests > 0 have another club's request on them.
+export const availableRooms = ({ date, from, to }) => {
+  const [y, m, d] = date.split("-").map(Number);
+  const t12 = v => { const [h, mi] = v.split(":").map(Number); return `${((h + 11) % 12) + 1}:${p2(mi)} ${h < 12 ? "AM" : "PM"}`; };
+  return call(`/rooms/available?year=${y}&month=${m}&day=${d}&start_time=${encodeURIComponent(t12(from))}&end_time=${encodeURIComponent(t12(to))}`);
+};
+
+// ---- room comments ----------------------------------------------------
+export const roomComments = id => call(`/rooms/${encodeURIComponent(id)}/comments`);
+export const postRoomComment = (id, body, organization_id) =>
+  call(`/rooms/${encodeURIComponent(id)}/comments`, { method: "POST", json: { body, organization_id: organization_id || null } });
+export const deleteRoomComment = (id, commentId) =>
+  call(`/rooms/${encodeURIComponent(id)}/comments/${commentId}`, { method: "DELETE" });
+
 // ---- requests ---------------------------------------------------------
 export const myRequests = () => call("/requests/mine");
 export const adminRequests = status => call(`/admin/requests?status=${status}&limit=200`).then(items => items.map(i => i.request));

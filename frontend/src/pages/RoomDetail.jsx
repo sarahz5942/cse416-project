@@ -23,13 +23,49 @@ function adaptScheduleItem(it) {
   return { title: it.name, label, date: fmtDate(start), time: `${fmtTime(start)}–${fmtTime(end)}`, start };
 }
 
-export default function RoomDetail({ room, onBack, onBook }) {
+export default function RoomDetail({ room, onBack, onBook, role, orgs = [], orgIds = {} }) {
   const notes = room.live ? { instructions: room.instructions || "", comments: [] } : roomNotes(room);
   const [comments, setComments] = useState(notes.comments);
   const [draft, setDraft] = useState("");
 
   // Live rooms: this room's real schedule from the API. Mock rooms: the mock events.
   const live = api.LIVE && room.live;
+
+  // Comments: real ones from the API on live rooms, local sample comments in mock mode.
+  const isAdmin = role === "admin";
+  const canComment = !live || isAdmin || (role === "leader" && orgs.length > 0);
+  const [asOrg, setAsOrg] = useState(orgs[0] || "");
+  const [cLoading, setCLoading] = useState(live);
+  const [cError, setCError] = useState("");
+  const [posting, setPosting] = useState(false);
+  const adaptComment = c => ({ id:c.id, org:c.posted_by, text:c.body, canDelete:c.can_delete,
+    when:new Date(c.created_at).toLocaleDateString(undefined, { month:"short", day:"numeric" }) });
+  useEffect(() => {
+    if (!live) return;
+    let off = false;
+    setCLoading(true); setCError("");
+    api.roomComments(room.id).then(l => { if (!off) setComments(l.map(adaptComment)); })
+      .catch(e => { if (!off) setCError(e.message); })
+      .finally(() => { if (!off) setCLoading(false); });
+    return () => { off = true; };
+  }, [room.id]); // eslint-disable-line
+  const postComment = async () => {
+    const text = draft.trim();
+    if (!text || posting) return;
+    if (!live) { setComments(c => [...c, { org:"Robotics Club", text }]); setDraft(""); return; }
+    setPosting(true); setCError("");
+    try {
+      const orgId = isAdmin ? null : orgIds[asOrg];
+      if (!isAdmin && !orgId) throw new Error("Pick a club to comment as.");
+      const c = await api.postRoomComment(room.id, text, orgId);
+      setComments(cs => [adaptComment(c), ...cs]); setDraft("");
+    } catch (e) { setCError(e.message); }
+    setPosting(false);
+  };
+  const removeComment = async c => {
+    try { await api.deleteRoomComment(room.id, c.id); setComments(cs => cs.filter(x => x.id !== c.id)); }
+    catch (e) { setCError(e.message); }
+  };
   const [events, setEvents] = useState(live ? [] : upcomingEvents(room));
   const [eventsLoading, setEventsLoading] = useState(live);
   const [eventsError, setEventsError] = useState("");
@@ -93,29 +129,48 @@ export default function RoomDetail({ room, onBack, onBook }) {
             {room.features.map(f=><Feature key={f}>{f}</Feature>)}
           </div>
 
-          {notes.instructions && (<>
           <div style={{ fontSize:19, fontWeight:700, marginBottom:10 }}>Instructions</div>
-          <div style={{ fontSize:18, color:"var(--ink-soft)", background:"var(--paper)", padding:"18px 20px",
-            borderRadius:14, marginBottom:28, lineHeight:1.65, whiteSpace:"pre-line" }}>{notes.instructions}</div>
-          </>)}
+          <div style={{ fontSize:18, color: notes.instructions ? "var(--ink-soft)" : "var(--ink-faint)", background:"var(--paper)", padding:"18px 20px",
+            borderRadius:14, marginBottom:28, lineHeight:1.65, whiteSpace:"pre-line" }}>{notes.instructions || "No instructions listed for this room."}</div>
 
-          {!room.live && (<>
           <div style={{ fontSize:19, fontWeight:700, marginBottom:10 }}>Comments from other clubs</div>
+          {cLoading && <div style={{ fontSize:16, color:"var(--ink-faint)", marginBottom:12 }}>Loading comments…</div>}
+          {cError && <div role="alert" style={{ fontSize:15, color:"var(--red)", fontWeight:600, marginBottom:10 }}>{cError}</div>}
+          {!cLoading && comments.length === 0 && (
+            <div style={{ fontSize:17, color:"var(--ink-faint)", background:"var(--paper)", padding:"16px 18px", borderRadius:12, marginBottom:12 }}>
+              No comments yet. Be the first to leave a tip for other clubs.</div>
+          )}
           <div style={{ display:"grid", gap:8, marginBottom:12 }}>
             {comments.map((c,i)=>(
-              <div key={i} style={{ background:"var(--card)", border:"2px solid var(--ink)", borderRadius:10, padding:"13px 16px", fontSize:18 }}>
+              <div key={c.id || i} style={{ background:"var(--card)", border:"2px solid var(--ink)", borderRadius:10, padding:"13px 16px", fontSize:18 }}>
                 <b>{c.org}:</b> {c.text}
+                {(c.when || c.canDelete) && (
+                  <div style={{ display:"flex", justifyContent:"space-between", marginTop:6, fontSize:13.5, color:"var(--ink-faint)" }}>
+                    <span>{c.when}</span>
+                    {c.canDelete && <button onClick={()=>removeComment(c)} style={{ fontSize:13.5, fontWeight:600, color:"var(--red)" }}>Delete</button>}
+                  </div>
+                )}
               </div>
             ))}
           </div>
-          <div style={{ display:"flex", gap:8 }}>
-            <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Add a comment or tip for other clubs…"
-              style={{ flex:1, minWidth:0, padding:"15px 18px", fontSize:18, border:"2px solid var(--ink)", borderRadius:8, background:"var(--paper)", outline:"none" }} />
-            <button disabled={!draft.trim()} onClick={()=>{ setComments(c=>[...c,{org:"Robotics Club",text:draft}]); setDraft(""); }}
-              style={{ padding:"12px 20px", borderRadius:8, fontSize:18, fontWeight:600, color:"var(--ink)",
-              background: draft.trim()?"var(--blue)":"var(--line-soft)" }}>Post</button>
-          </div>
-          </>)}
+          {canComment ? (
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {live && !isAdmin && orgs.length > 1 && (
+                <select value={asOrg} onChange={e=>setAsOrg(e.target.value)} aria-label="Comment as"
+                  style={{ padding:"12px 10px", fontSize:16, border:"2px solid var(--ink)", borderRadius:8, background:"var(--paper)" }}>
+                  {orgs.map(o => <option key={o}>{o}</option>)}
+                </select>
+              )}
+              <input value={draft} onChange={e=>setDraft(e.target.value)} maxLength={1000} placeholder="Add a comment or tip for other clubs…"
+                onKeyDown={e=>{ if (e.key === "Enter") postComment(); }}
+                style={{ flex:1, minWidth:200, padding:"15px 18px", fontSize:18, border:"2px solid var(--ink)", borderRadius:8, background:"var(--paper)", outline:"none" }} />
+              <button disabled={!draft.trim() || posting} onClick={postComment}
+                style={{ padding:"12px 20px", borderRadius:8, fontSize:18, fontWeight:600, color:"var(--ink)",
+                background: draft.trim() ? "var(--blue)" : "var(--line-soft)" }}>{posting ? "Posting…" : "Post"}</button>
+            </div>
+          ) : (
+            <div style={{ fontSize:15, color:"var(--ink-faint)" }}>Comments can be posted by verified club leaders and admins.</div>
+          )}
         </div>
 
         <div>
