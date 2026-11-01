@@ -61,8 +61,13 @@ export default function FindSpace({ onView, onBook, rooms = ROOMS, loading = fal
   const panel = useRef(null);
   useDialog(panel, { open: sheetOpen, onClose: () => setSheet(false) });
   useScrollLock(sheetOpen);
-  const activeFilters = (building!==BUILDINGS[0]) + (type!==TYPES[0]) + (minCap>0) + picked.length;
-  const clearAll = () => { setBuilding(BUILDINGS[0]); setType(TYPES[0]); setMinCap(0); setPicked([]); setFq(""); };
+  const activeFilters = (building!==BUILDINGS[0]) + (type!==TYPES[0]) + (minCap>0) + picked.length + (date||from||to ? 1 : 0) + (showTaken ? 1 : 0);
+  // Reset search: every field back to how the page starts.
+  const searchUsed = activeFilters > 0 || q !== "" || fq !== "";
+  const resetAll = () => {
+    setQ(""); setBuilding(BUILDINGS[0]); setType(TYPES[0]); setMinCap(0);
+    setPicked([]); setFq(""); setDate(""); setFrom(""); setTo(""); setShowTaken(false);
+  };
 
   const goTo = p => { setPage(p); window.scrollTo({ top:0, behavior:"smooth" }); };
   const pageBtn = disabled => ({ padding:"8px 14px", borderRadius:8, fontSize:14, fontWeight:600, border:"2px solid var(--ink)",
@@ -85,7 +90,13 @@ export default function FindSpace({ onView, onBook, rooms = ROOMS, loading = fal
           borderRadius:14, padding:18, boxShadow:"var(--shadow)" }}>
           <div className="sheet-head">
             <h2 id="fs-filters-title" style={{ fontSize:20 }}>Filters</h2>
-            {activeFilters>0 && <button onClick={clearAll} style={{ fontSize:15, fontWeight:700, color:"var(--link)" }}>Clear all</button>}
+            {searchUsed && <button onClick={resetAll} style={{ fontSize:15, fontWeight:700, color:"var(--link)" }}>Reset search</button>}
+          </div>
+          <div className="hide-phone" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+            <h2 style={{ fontSize:18 }}>Filters</h2>
+            <button onClick={resetAll} disabled={!searchUsed} aria-label="Reset search: clear all fields and filters"
+              style={{ padding:"6px 12px", borderRadius:8, fontSize:13.5, fontWeight:700, border:"2px solid var(--ink)",
+              color:"var(--ink)", background:"var(--card)" }}>↺ Reset search</button>
           </div>
           <div className="hide-phone">
           <label style={{ fontSize:13, fontWeight:600, color:"var(--ink-soft)" }}>Search</label>
@@ -168,7 +179,11 @@ export default function FindSpace({ onView, onBook, rooms = ROOMS, loading = fal
           {loading && <LoadingScreen inline label="Loading spaces from 25Live…" />}
           {!loading && avail.loading && <LoadingScreen inline label="Checking which rooms are free…" />}
           {!loading && !avail.loading && filtered.length===0 && <div style={{ textAlign:"center", padding:"50px 20px", color:"var(--ink-faint)",
-            background:"var(--card)", borderRadius:14, border:"2px dashed var(--ink-faint)" }}>{avail.map ? "No spaces are free then. Try another time, or tick the box to see booked rooms you can waitlist." : "No spaces match those filters."}</div>}
+            background:"var(--card)", borderRadius:14, border:"2px dashed var(--ink-faint)" }}>
+            <div>{avail.map ? "No spaces are free then. Try another time, or tick the box to see booked rooms you can waitlist." : "No spaces match those filters."}</div>
+            {searchUsed && <button onClick={resetAll} style={{ marginTop:12, padding:"8px 16px", borderRadius:8, fontSize:14, fontWeight:700,
+              color:"var(--ink)", background:"var(--blue)" }}>Reset search</button>}
+          </div>}
           {!loading && !avail.loading && filtered.length>0 && (
             <div style={{ fontSize:14, color:"var(--ink-faint)" }}>
               Showing {(current-1)*PAGE_SIZE+1}–{Math.min(current*PAGE_SIZE, filtered.length)} of {filtered.length} spaces
