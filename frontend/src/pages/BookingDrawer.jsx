@@ -257,7 +257,7 @@ export default function BookingDrawer({ room, onClose, onSubmit, onJoinWaitlist,
               </div>
             )}
 
-            {wlMsg && <div style={{ color:"var(--green)", fontWeight:600, fontSize:15, marginTop:14 }}>{wlMsg}</div>}
+            {wlMsg && <div role="status" style={{ color:"var(--green)", fontWeight:600, fontSize:15, marginTop:14 }}>{wlMsg}</div>}
             {conflicts.length > 0 && !needOrg && onJoinWaitlist && (
               <WaitlistOffer eventName={eventName} roomName={room.name} days={conflicts} start={start} end={end} line={waitlistLine} busy={busy} onJoin={joinWl} />
             )}
@@ -266,7 +266,7 @@ export default function BookingDrawer({ room, onClose, onSubmit, onJoinWaitlist,
 
         <div className="booking-foot" style={{ padding:"16px 22px", borderTop:"1px solid var(--line)", background:"var(--paper)" }}>
           {done ? (
-            <div style={{ color:"var(--green)", fontWeight:600, fontSize:16.8, textAlign:"center" }}>
+            <div role="status" style={{ color:"var(--green)", fontWeight:600, fontSize:16.8, textAlign:"center" }}>
               ✓ {sorted.length} request{sorted.length === 1 ? "" : "s"} sent — you'll get a notification when reviewed
             </div>
           ) : confirming ? (

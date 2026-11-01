@@ -43,7 +43,7 @@ app.add_middleware(UsageMiddleware)
 # still work fine without it, since those aren't cross-origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://campusreserve-1.onrender.com"],
+    allow_origins=["http://localhost:5173", "https://campusreserve-stonybrook.onrender.com"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
