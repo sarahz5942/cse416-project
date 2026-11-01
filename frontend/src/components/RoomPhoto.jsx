@@ -6,6 +6,26 @@ const RETRY_DELAY_MS = 2000;
 // Shown for rooms with no photo. The file goes in frontend/public/sbulogo.png.
 const PLACEHOLDER_LOGO = "/sbulogo.png";
 
+// Google Form where people can send in a photo of a room that has none. "" hides the link.
+// Paste the form's link (Send > link icon), e.g. "https://docs.google.com/forms/d/e/1FAIpQL.../viewform"
+const PHOTO_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSduXPiNpuNF2JGSKzO_-3RFhJeboBinCPwzmUkLEXGfKgZfCg/viewform?usp=pp_url&entry.1129355335=ROOM&entry.834608001=roomId&entry.901803129=BUILDING";
+// Optional: fill in the form's answers for the room. Get the ids from the form's
+// ⋮ menu > "Get pre-filled link" (they look like "entry.123456789"). Leave "" to skip one.
+const PHOTO_FORM_FIELDS = { room: "entry.1129355335", building: "entry.901803129", roomId: "entry.834608001" };
+
+function photoFormLink(room) {
+  try {
+    const url = new URL(PHOTO_FORM_URL);
+    const answers = { room: room.name, building: room.building, roomId: String(room.id) };
+    let prefilled = false;
+    for (const [key, entry] of Object.entries(PHOTO_FORM_FIELDS)) {
+      if (entry && answers[key]) { url.searchParams.set(entry, answers[key]); prefilled = true; }
+    }
+    if (prefilled) url.searchParams.set("usp", "pp_url");
+    return url.toString();
+  } catch { return null; }   // not a valid link
+}
+
 // A soft pulsing box shown while a photo loads (and during the retry wait).
 const PULSE_CSS = `@keyframes roomPhotoPulse { 0%,100% { opacity:.55 } 50% { opacity:1 } }
 @media (prefers-reduced-motion: reduce) { .room-photo-loading { animation:none !important } }`;
@@ -32,8 +52,9 @@ export default function RoomPhoto({ room }) {
   };
 
   if (i >= sources.length) {
+    const formLink = PHOTO_FORM_URL ? photoFormLink(room) : null;
     return (
-      <div role="img" aria-label={`No photo available for ${room.name}`}
+      <div
         style={{ width:"100%", height:"100%", minHeight:150, borderRadius:10, border:"2px solid var(--ink)",
           overflow:"hidden", background:"var(--paper)", display:"flex", flexDirection:"column",
           alignItems:"center", justifyContent:"center", gap:8, padding:12 }}>
@@ -41,7 +62,16 @@ export default function RoomPhoto({ room }) {
           <img src={PLACEHOLDER_LOGO} alt="" onError={() => setLogoOk(false)}
             style={{ maxWidth:"70%", maxHeight:80, objectFit:"contain", opacity:0.85 }} />
         )}
-        <span style={{ fontSize:12.5, fontWeight:600, color:"var(--ink-faint)" }}>No photo available</span>
+        <span role="img" aria-label={`No photo available for ${room.name}`}
+          style={{ fontSize:12.5, fontWeight:600, color:"var(--ink-faint)" }}>No photo available</span>
+        {formLink && (
+          <a href={formLink} target="_blank" rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}   // don't also open the room card the photo sits in
+            aria-label={`Share a photo of ${room.name} (opens a Google Form in a new tab)`}
+            style={{ fontSize:13, fontWeight:700, color:"var(--link)", textDecoration:"underline", textAlign:"center" }}>
+            Have a photo? Share it ↗
+          </a>
+        )}
       </div>
     );
   }
