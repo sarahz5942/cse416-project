@@ -1,0 +1,100 @@
+/* Full-page campus map (CampusMap.jsx), styled after Google Maps:
+   the map fills the space, the search box and filter chips float on top, and a card
+   slides in on the left (desktop) or up from the bottom (phones). */
+
+.gm { position: relative; height: calc(100dvh - 67px); min-height: 420px; overflow: hidden; background: #e8eaed; }
+html.has-tabbar .gm { height: calc(100dvh - var(--topbar-h) - 3px - var(--tabbar-h) - var(--safe-b)); }
+.gm-map { position: absolute; inset: 0; z-index: 0; }
+.gm .leaflet-container { font-family: inherit; background: #e8eaed; }
+
+/* ---- floating search + chips ---- */
+.gm-top { position: absolute; top: 14px; left: 14px; right: 14px; z-index: 1100;  /* above the card, so suggestions show over it */ display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: flex-start; pointer-events: none; }
+.gm-top > * { pointer-events: auto; }
+.gm-search { position: relative; display: flex; align-items: center; width: 380px; max-width: 100%; height: 48px;
+  background: var(--card); border-radius: 24px; box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+.gm-search input { flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: transparent; font-size: 16px;
+  padding: 0 8px; color: var(--ink); }
+.gm-search input:focus { box-shadow: none; }
+.gm-list-btn, .gm-clear { width: 44px; height: 44px; border-radius: 999px; font-size: 20px; color: var(--ink-soft); flex-shrink: 0; }
+.gm-list-btn { margin-left: 2px; }
+.gm-list-btn:hover:not(:disabled), .gm-clear:hover:not(:disabled) { background: var(--line-soft); transform: none; }
+.gm-suggest { position: absolute; top: 54px; left: 0; right: 0; list-style: none; margin: 0; padding: 6px 0; background: var(--card);
+  border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,.25); max-height: 340px; overflow-y: auto; }
+.gm-suggest button { width: 100%; display: flex; gap: 12px; align-items: center; text-align: left; padding: 9px 16px; color: var(--ink); }
+.gm-suggest button:hover:not(:disabled), .gm-suggest button:focus-visible { background: var(--line-soft); transform: none; }
+.gm-suggest b { display: block; font-size: 15px; }
+.gm-suggest small { display: block; font-size: 13px; color: var(--ink-faint); }
+.gm-suggest-icon { font-size: 18px; width: 22px; text-align: center; }
+.gm-suggest-empty { padding: 12px 16px; font-size: 14px; color: var(--ink-faint); }
+
+.gm-chips { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 6px; }
+.gm-chip { height: 36px; display: inline-flex; align-items: center; padding: 0 14px; border-radius: 18px; background: var(--card);
+  box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 14px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+.gm-chip select { border: none; background: transparent; font: inherit; color: inherit; outline: none; cursor: pointer; }
+.gm-chip[aria-pressed="true"] { background: var(--blue-wash); color: var(--link); }
+.gm-chip:hover:not(:disabled) { transform: none; }
+
+/* ---- status messages ---- */
+.gm-toast { position: absolute; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 1000; max-width: calc(100% - 32px);
+  padding: 10px 16px; border-radius: 10px; background: #323232; color: #fff; font-size: 14px; font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,.3); text-align: center; }
+.gm-toast-error { background: var(--red); }
+.gm-toast button { color: #fff; text-decoration: underline; font-weight: 700; margin-left: 6px; }
+
+/* ---- pins: a teardrop with the room count, like a map marker ---- */
+.cr-pin { background: none !important; border: none !important; }
+.cr-pin-dot { position: absolute; left: 2px; top: 0; width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: #EA4335; border: 2px solid #fff;
+  box-shadow: 0 2px 5px rgba(0,0,0,.35); font: 800 14px/1 'DM Sans', system-ui, sans-serif; color: #fff; cursor: pointer; }
+.cr-pin-dot > span { transform: rotate(45deg); }   /* keep the number upright */
+.cr-pin-on .cr-pin-dot { background: #1B2A4A; transform: rotate(-45deg) scale(1.15); }
+.cr-pin:focus-visible { outline: none; }
+.cr-pin:focus-visible .cr-pin-dot { outline: 3px solid #1F5FD1; outline-offset: 3px; }
+.gm .leaflet-tooltip { font: 700 13px 'DM Sans', system-ui, sans-serif; border-radius: 8px; padding: 4px 9px; }
+
+/* ---- the card ---- */
+.gm-card { position: absolute; z-index: 1000; top: 76px; left: 14px; bottom: 14px; width: 380px; display: flex; flex-direction: column;
+  background: var(--card); color: var(--ink); border-radius: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3); overflow: hidden;
+  animation: gm-in .18s ease-out; }
+html:not(.has-tabbar) .gm-card { bottom: 92px; }   /* leave room for the accessibility button */
+@keyframes gm-in { from { opacity: 0; transform: translateX(-12px); } }
+.gm-card-head { display: flex; justify-content: space-between; gap: 10px; padding: 16px 16px 12px; border-bottom: 1px solid var(--line); }
+.gm-card-head h2 { font-size: 22px; margin: 0; }
+.gm-close { width: 40px; height: 40px; border-radius: 999px; font-size: 24px; color: var(--ink-soft); flex-shrink: 0; }
+.gm-close:hover:not(:disabled) { background: var(--line-soft); transform: none; }
+.gm-sub { font-size: 13.5px; color: var(--ink-faint); }
+
+.gm-rooms, .gm-buildings { list-style: none; margin: 0; padding: 10px; overflow-y: auto; flex: 1; display: grid; gap: 8px; align-content: start; }
+.gm-room { border: 2px solid var(--line); border-radius: 12px; padding: 12px; transition: border-color .2s, background .2s; }
+.gm-room-focus { border-color: var(--ink); background: var(--blue-wash); }
+.gm-room-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.gm-room h3 { font-family: inherit; font-size: 16px; font-weight: 700 !important; margin: 0; }
+.gm-features { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.gm-note { margin-top: 8px; font-size: 13px; color: var(--ink-soft); background: var(--paper); border-radius: 8px; padding: 6px 9px; }
+.gm-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.gm-link { font-size: 14px; font-weight: 700; color: var(--link); }
+.gm-book { margin-left: auto; padding: 7px 18px; border-radius: 8px; font-size: 14px; font-weight: 700; color: var(--ink);
+  background: var(--blue); border: 2px solid var(--ink) !important; box-shadow: 2px 2px 0 var(--ink); }
+.gm-buildings button { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; text-align: left;
+  padding: 11px 12px; border-radius: 10px; font-size: 15px; font-weight: 600; color: var(--ink); }
+.gm-buildings button:hover:not(:disabled) { background: var(--line-soft); transform: none; }
+.gm-buildings small { font-weight: 500; color: var(--ink-faint); }
+.gm-count { min-width: 28px; height: 24px; padding: 0 8px; border-radius: 999px; display: inline-grid; place-items: center;
+  background: #EA4335; color: #fff; font-size: 13px; font-weight: 800; flex-shrink: 0; }
+
+/* Leaflet controls a little more like Google's */
+.gm .leaflet-bar { border: none; box-shadow: 0 1px 4px rgba(0,0,0,.3); border-radius: 8px; overflow: hidden; }
+.gm .leaflet-bar a { width: 40px; height: 40px; line-height: 40px; color: #333; }
+
+/* ---- phones: search across the top, card as a bottom sheet ---- */
+@media (max-width: 639px) {
+  .gm-top { top: 10px; left: 10px; right: 10px; }
+  .gm-search { width: 100%; }
+  .gm-chips { padding-top: 0; }
+  .gm-card { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 58%; border-radius: 18px 18px 0 0;
+    animation-name: gm-up; }
+  @keyframes gm-up { from { opacity: 0; transform: translateY(20px); } }
+  .gm .leaflet-bottom.leaflet-right { margin-bottom: 4px; }
+}
+@media (prefers-reduced-motion: reduce) { .gm-card { animation: none; } }

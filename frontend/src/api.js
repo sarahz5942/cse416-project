@@ -77,6 +77,8 @@ export const adaptClub = o => ({ id:o.id, name:o.name, category:null, bio:o.desc
 export const rooms = () => call("/rooms");
 export const roomSchedule = (id, startKey, endKey) =>
   call(`/rooms/${encodeURIComponent(id)}/schedule?start=${startKey}&end=${endKey}`);
+export const buildings = ({ includeLocation = false } = {}) =>
+  call(`/rooms/buildings${includeLocation ? "?include_location=true" : ""}`);
 
 // Rooms that are free for a whole window. Rooms missing from the list are taken;
 // rooms with overlapping_pending_requests > 0 have another club's request on them.
