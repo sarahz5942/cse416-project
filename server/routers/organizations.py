@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ from database import get_db
 from models.organization_and_venue import Organization, OrganizationMember
 from models.user import User
 from routers.admin import MembershipOut, membership_out, notify_admins_of_join
+from services.pagination import Page, paged
 from services.permissions import as_uuid, has_scope, verified_org_ids
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
@@ -33,7 +34,9 @@ class JoinBody(BaseModel):
 
 @router.get("", response_model=list[OrganizationOut])
 def list_organizations(
+    response: Response,
     search: str | None = Query(None, description="Name contains"),
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user),
 ):
@@ -46,7 +49,7 @@ def list_organizations(
         q = q.filter(func.lower(Organization.name).like(f"%{search.lower()}%"))
     return [OrganizationOut(id=str(o.id), name=o.name, description=o.description,
                             verified_member_count=counts.get(o.id, 0))
-            for o in q.order_by(Organization.name).all()]
+            for o in page.query(q.order_by(Organization.name, Organization.id), response).all()]
 
 
 @router.get("/{organization_id}", response_model=OrganizationOut)

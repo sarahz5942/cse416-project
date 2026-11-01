@@ -1,0 +1,46 @@
+# Keeps the Render API awake. Render's free plan puts a web service to sleep after
+# 15 minutes without requests, and the next visitor waits up to a minute for it to
+# wake. This pings the API every 10 minutes so that doesn't happen.
+#
+# Why every 10 and not 15: GitHub often starts scheduled runs several minutes late,
+# so a 15-minute schedule would regularly let the service fall asleep.
+#
+# Run it by hand: Actions tab > Keep Render awake > Run workflow.
+# Change the URL without editing this file: Settings > Secrets and variables >
+# Actions > Variables > New repository variable, named KEEP_AWAKE_URL.
+
+name: Keep Render awake
+
+on:
+  schedule:
+    - cron: "3,13,23,33,43,53 * * * *"   # every 10 min, avoiding the busy round minutes
+  workflow_dispatch:            # adds a "Run workflow" button
+
+concurrency:
+  group: keep-awake
+  cancel-in-progress: true      # never stack up runs if one is slow
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the API
+        env:
+          URL: ${{ vars.KEEP_AWAKE_URL || 'https://campusreserve.onrender.com/docs' }}
+        run: |
+          # A sleeping service can take up to a minute to answer, so wait up to 90 seconds,
+          # and try 3 times in case Render is mid-deploy.
+          for attempt in 1 2 3; do
+            start=$(date +%s)
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$URL") || true
+            took=$(( $(date +%s) - start ))
+            echo "Attempt $attempt: HTTP $code in ${took}s"
+            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+              if [ "$took" -gt 20 ]; then echo "::notice::The API was asleep and took ${took}s to wake up."; fi
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::The API didn't answer at $URL (last HTTP status $code)."
+          exit 1

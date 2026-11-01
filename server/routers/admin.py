@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
@@ -24,6 +24,7 @@ from routers.requests import CheckOut, RequestOut, SyncOut, request_out
 from services import booking, room_features
 from services.live25_sync import get_provider, manual_steps
 from services.notify import notify
+from services.pagination import Page, paged
 from services.permissions import admins, as_uuid, can_manage_venue
 from services.request_flow import check_booking, load_25live_rooms
 from services.room_import import ensure_room, find_room, import_rooms
@@ -43,10 +44,11 @@ class QueueItem(BaseModel):
 
 @router.get("/requests", response_model=list[QueueItem])
 async def review_queue(
+    response: Response,
     status_: RequestStatus = Query(RequestStatus.PENDING, alias="status"),
     room_id: str | None = None,
     organization_id: str | None = None,
-    limit: int = Query(50, ge=1, le=200),
+    page: Page = Depends(paged(default_limit=50, max_limit=200)),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["handle:requests"]),
 ):
@@ -59,11 +61,12 @@ async def review_queue(
         if room_id:
             room = find_room(db, room_id)
             if room is None:
+                response.headers["X-Total-Count"] = "0"
                 return []
             q = q.filter(Request.room_id == room.id)
         if organization_id:
             q = q.filter(Request.organization_id == as_uuid(organization_id, "organization"))
-        return q.order_by(Request.created_at).limit(limit).all()
+        return page.query(q.order_by(Request.created_at, Request.id), response).all()
 
     items = []
     for req in await run_in_threadpool(load):
@@ -94,7 +97,9 @@ class ConfirmSyncBody(BaseModel):
 
 @router.get("/sync", response_model=list[SyncItem])
 def sync_queue(
+    response: Response,
     include_past: bool = False,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["sync:external-bookings"]),
 ):
@@ -105,7 +110,7 @@ def sync_queue(
     if not include_past:
         q = q.filter(Request.end_time >= campus_now())
     out = []
-    for req in q.order_by(Request.start_time).all():
+    for req in page.query(q.order_by(Request.start_time, Request.id), response).all():
         details = booking.sync_details(req)
         out.append(SyncItem(request=request_out(req), details=details,
                             steps=manual_steps(details)))
@@ -318,9 +323,11 @@ def _affected(db: Session, c: RoomClosure) -> list[Request]:
 
 @router.get("/closures", response_model=list[ClosureOut])
 def list_closures(
+    response: Response,
     room_id: str | None = None,
     venue_id: str | None = None,
     include_past: bool = False,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["manage:rooms"]),
 ):
@@ -328,13 +335,14 @@ def list_closures(
     if room_id:
         room = find_room(db, room_id)
         if room is None:
+            response.headers["X-Total-Count"] = "0"
             return []
         q = q.filter(or_(RoomClosure.room_id == room.id, RoomClosure.venue_id == room.venue_id))
     if venue_id:
         q = q.filter(RoomClosure.venue_id == as_uuid(venue_id, "venue"))
     if not include_past:
         q = q.filter(RoomClosure.closed_until >= campus_now())
-    return [closure_out(c) for c in q.order_by(RoomClosure.closed_from).all()]
+    return [closure_out(c) for c in page.query(q.order_by(RoomClosure.closed_from, RoomClosure.id), response).all()]
 
 
 @router.post("/closures", response_model=ClosureOut, status_code=status.HTTP_201_CREATED)
@@ -459,9 +467,11 @@ class OrganizationIn(BaseModel):
 
 @router.get("/users", response_model=list[UserAdminOut])
 def list_users(
+    response: Response,
     role: UserRole | None = None,
     awaiting_verification: bool = Query(False, description="Only users with an unverified membership"),
     search: str | None = Query(None, description="Name or email contains"),
+    page: Page = Depends(paged(default_limit=500, max_limit=500)),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["manage:users"]),
 ):
@@ -474,7 +484,7 @@ def list_users(
     if awaiting_verification:
         q = q.join(OrganizationMember, OrganizationMember.user_id == User.id).filter(
             OrganizationMember.verified_at.is_(None)).distinct()
-    return [user_out(u) for u in q.order_by(User.name).limit(500).all()]
+    return [user_out(u) for u in page.query(q.order_by(User.name, User.id), response).all()]
 
 
 @router.patch("/users/{user_id}", response_model=UserAdminOut)

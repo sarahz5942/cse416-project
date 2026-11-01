@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from datetime import date
@@ -22,6 +22,7 @@ from models.user import User
 from models.organization_and_venue import OrganizationMember
 from services import booking
 from services.live25_sync import get_provider
+from services.pagination import Page, paged
 from services.permissions import (
     as_uuid,
     can_manage_venue,
@@ -307,13 +308,16 @@ async def create_request(
 @router.get("", response_model=list[RequestOut])
 @router.get("/mine", response_model=list[RequestOut])
 def list_my_requests(
+    response: Response,
     status_: RequestStatus | None = Query(None, alias="status"),
     organization_id: str | None = None,
     upcoming_only: bool = False,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["read:requests"]),
 ):
-    """Requests from your organizations, plus any you submitted. Newest first."""
+    """Requests from your organizations, plus any you submitted. Newest first.
+    Paginate with ?limit=&offset= (the total is in the X-Total-Count header)."""
     orgs = verified_org_ids(db, user)
     q = db.query(Request).filter(or_(Request.organization_id.in_(orgs),
                                      Request.requester_id == user.id))
@@ -323,7 +327,8 @@ def list_my_requests(
         q = q.filter(Request.status == status_)
     if upcoming_only:
         q = q.filter(Request.end_time >= dt.datetime.now())
-    return [request_out(r) for r in q.order_by(Request.created_at.desc()).all()]
+    q = q.order_by(Request.created_at.desc(), Request.id)
+    return [request_out(r) for r in page.query(q, response).all()]
 
 
 

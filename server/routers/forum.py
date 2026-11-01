@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session, selectinload
 
@@ -18,6 +18,7 @@ from authentication import get_current_user
 from database import get_db
 from models.communication import ForumCategory, ForumPost
 from models.user import User
+from services.pagination import Page, paged
 from services.permissions import as_uuid, require_member
 
 router = APIRouter(prefix="/forum", tags=["forum"])
@@ -132,16 +133,19 @@ def _get_post(db: Session, post_id: str) -> ForumPost:
 
 @router.get("", response_model=list[PostOut])
 def list_posts(
+    response: Response,
     category: ForumCategory | None = Query(None, description="Only this category"),
-    limit: int = Query(100, ge=1, le=200),
+    page: Page = Depends(paged(default_limit=100, max_limit=200)),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["read:forum"]),
 ):
-    """Top-level posts with their replies, newest first."""
+    """Top-level posts with their replies, newest first.
+    Paginate with ?limit=&offset= (the total is in the X-Total-Count header)."""
     q = db.query(ForumPost).filter(ForumPost.parent_id.is_(None))
     if category is not None:
         q = q.filter(ForumPost.category == category)
-    posts = q.order_by(ForumPost.created_at.desc()).limit(limit).options(*_load()).all()
+    q = q.order_by(ForumPost.created_at.desc(), ForumPost.id).options(*_load())
+    posts = page.query(q, response).all()
     return _posts_out(db, posts)
 
 

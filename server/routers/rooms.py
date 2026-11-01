@@ -30,6 +30,7 @@ from database import get_db
 from models.room import Request, RequestStatus, Room, RoomClosure, SyncStatus
 from models.user import User
 from services import live25, room_features
+from services.pagination import Page, paged
 from services.room_features import RoomFilters
 from services.room_merge import (
     booking_window_open,
@@ -342,17 +343,20 @@ def _filter_rooms(rooms: list[dict], building: str | None, min_capacity: int | N
 
 @router.get("", response_model=list[RoomResponse])
 async def list_rooms(
+    response: Response,
     building: str | None = None,
     min_capacity: int | None = None,
     club_bookable_only: bool = False,
     include_inactive: bool = False,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     current_user: User = Security(get_current_user, scopes=["read:rooms"]),
 ):
-    """List rooms, optionally filtered by building, minimum capacity, or bookability."""
+    """List rooms, optionally filtered by building, minimum capacity, or bookability.
+    Paginate with ?limit=&offset= (the total is in the X-Total-Count header)."""
     rooms = _filter_rooms(await _merged_rooms(db), building, min_capacity,
                           club_bookable_only, include_inactive)
-    return [RoomResponse(**r) for r in rooms]
+    return [RoomResponse(**r) for r in page.items(rooms, response)]
 
 
 def _parse_window(year: int, month: int, day: int,
@@ -416,6 +420,7 @@ async def _available_rooms(db: Session, start: dt.datetime, end: dt.datetime,
 # as a room id.
 @router.get("/available", response_model=list[AvailableRoomResponse])
 async def list_available_rooms(
+    response: Response,
     year: int = Query(..., ge=2000, le=2100, examples=[2026]),
     month: int = Query(..., ge=1, le=12, examples=[10]),
     day: int = Query(..., ge=1, le=31, examples=[9]),
@@ -425,6 +430,7 @@ async def list_available_rooms(
     building: str | None = None,
     min_capacity: int | None = None,
     club_bookable_only: bool = False,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     current_user: User = Security(get_current_user, scopes=["read:rooms"]),
 ):
@@ -450,12 +456,13 @@ async def list_available_rooms(
         lambda all_rooms: _filter_rooms(all_rooms, building, min_capacity,
                                         club_bookable_only, include_inactive=False),
     )
-    return [AvailableRoomResponse(**r) for r in rooms]
+    return [AvailableRoomResponse(**r) for r in page.items(rooms, response)]
 
 
 # Must also come before "/{room_id}".
 @router.get("/search", response_model=list[AvailableRoomResponse])
 async def search_rooms(
+    response: Response,
     year: int = Query(..., ge=2000, le=2100, examples=[2026]),
     month: int = Query(..., ge=1, le=12, examples=[10]),
     day: int = Query(..., ge=1, le=31, examples=[9]),
@@ -487,6 +494,7 @@ async def search_rooms(
         "Any other feature tags the room must have. Repeat for several: "
         "&features=projector&features=sink")),
     club_bookable_only: bool = False,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     current_user: User = Security(get_current_user, scopes=["read:rooms"]),
 ):
@@ -542,7 +550,7 @@ async def search_rooms(
     if attendance is not None:
         # Best fit first: the smallest room that holds everyone.
         rooms.sort(key=lambda r: (r.get("capacity") or 0, r["name"]))
-    return [AvailableRoomResponse(**r) for r in rooms]
+    return [AvailableRoomResponse(**r) for r in page.items(rooms, response)]
 
 
 @router.get("/cache-status")

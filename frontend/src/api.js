@@ -19,7 +19,9 @@ function errorMessage(data, status) {
   return `Request failed (${status})`;
 }
 
-async function call(path, { method = "GET", json, form } = {}) {
+// withTotal: true returns { items, total } instead of just the data. `total` comes from the
+// server's X-Total-Count header (set by paginated endpoints: ?limit=&offset=).
+async function call(path, { method = "GET", json, form, withTotal = false } = {}) {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   let body;
@@ -35,8 +37,21 @@ async function call(path, { method = "GET", json, form } = {}) {
     if (res.status === 401 && token && path !== "/auth/token") setToken(null);
     throw new Error(errorMessage(data, res.status));
   }
+  if (withTotal) {
+    const header = res.headers.get("X-Total-Count");
+    return { items: data || [], total: header != null ? Number(header) : (data || []).length };
+  }
   return data;
 }
+
+// Query string for a paginated request, e.g. qs({ search: "dance", limit: 12, offset: 0 }).
+// Empty values are left out.
+const qs = params => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") p.set(k, v);
+  const str = p.toString();
+  return str ? `?${str}` : "";
+};
 
 // ---- auth -------------------------------------------------------------
 export async function login(email, password) {
@@ -52,6 +67,9 @@ export const joinOrg = (id, position_title) =>
   call(`/organizations/${id}/join`, { method: "POST", json: { position_title: position_title || null } });
 export const memberships = () => call("/me/memberships");
 export const orgs = () => call("/organizations");
+// One page of clubs: resolves to { items, total }. e.g. orgsPage({ search: "dance", limit: 12, offset: 0 })
+export const orgsPage = ({ search, limit, offset = 0 } = {}) =>
+  call("/organizations" + qs({ search, limit, offset }), { withTotal: true });
 export const orgDetail = id => call(`/organizations/${id}`);
 export const adaptClub = o => ({ id:o.id, name:o.name, category:null, bio:o.description || "", count:o.verified_member_count || 0, eboard:null, live:true });
 
