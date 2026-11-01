@@ -172,10 +172,11 @@ def _done_with_db(db: Session) -> None:
     Otherwise the connection stays checked out for the whole (sometimes long)
     25Live call, and a few slow requests can use up the pool's 15 connections,
     after which every request, even logging in, times out.
-    Everything here only reads, so nothing is lost; if the request queries again
-    later, the session simply checks out a connection again.
+    Ending the transaction with commit (not rollback) keeps anything the request
+    already added, which matters in the tests, where test data isn't committed yet.
+    If the request queries again later, the session checks out a connection again.
     """
-    db.rollback()
+    db.commit()
 
 
 def _room_list_data(db: Session):
