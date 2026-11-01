@@ -4,12 +4,12 @@ import useDialog from '../a11y/useDialog.js';
 import NavIcon from './NavIcon.jsx';
 
 export const NAV = {
-  leader: [["requests","My requests"],["find","Find a space"],["forum","Forum"],["messages","Messages"],["clubs","Clubs"]],
-  admin: [["approvals","Approvals"],["verifications","Verifications"],["rooms","Rooms"],["analytics","Analytics"],["forum","Forum"],["messages","Messages"],["clubs","Clubs"]],
-  venue: [["rooms","Rooms"],["messages","Messages"],["clubs","Clubs"]],
+  leader: [["requests","My requests"],["find","Find a space"],["forum","Forum"],["messages","Messages"],["clubs","Clubs"], ["map", "Campus map"]],
+  admin: [["approvals","Approvals"],["verifications","Verifications"],["rooms","Rooms"],["analytics","Analytics"],["forum","Forum"],["messages","Messages"],["clubs","Clubs"], ["map", "Campus map"]],
+  venue: [["rooms","Rooms"],["messages","Messages"],["clubs","Clubs"], ["map", "Campus map"]],
 };
 // Shorter names for the phone tab bar, where each tab is about 75px wide.
-const SHORT = { requests:"Requests", find:"Find", verifications:"Verify" };
+const SHORT = { requests:"Requests", find:"Find", verifications:"Verify", map:"Map" };
 const TABS_MAX = 5;  // more than this and the extras go under "More"
 
 function Badge({ n, label, dot = false }) {

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ROOMS, THREADS, FORUM_POSTS, PROFILES, CLUBS, PEOPLE, getDays } from './data/mock.js';
 import Header, { NAV } from './components/Header.jsx';
 import { useRoute, enc, dec } from './router.js';
+import CampusMapPage from './pages/CampusMapPage.jsx';
 import FindSpace from './pages/FindSpace.jsx';
 import RoomDetail from './pages/RoomDetail.jsx';
 import BookingDrawer from './pages/BookingDrawer.jsx';
@@ -394,6 +395,8 @@ export default function App() {
             memberships={memberships} membershipsLoaded={memLoaded} onSearchOrgs={searchOrgOptions} onJoin={joinOrg} />}
           {page==="messages" && <Messages threads={threads} onSend={sendMessage} onStartChat={startChat}
             activeId={activeThread} setActiveId={setActiveThread} selfId={selfId} onSearchPeople={searchPeople} unreadMap={unreadMap} />}
+          {page==="map" && <CampusMapPage rooms={rooms} loading={roomsLoading}
+            onView={role==="leader" ? openRoomDetail : undefined} onBook={role==="leader" ? setOpenRoom : undefined} />}
         </>
       )}
 
