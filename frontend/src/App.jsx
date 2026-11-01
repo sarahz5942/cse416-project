@@ -268,21 +268,24 @@ export default function App() {
   const viewingRoomId = seg[0]==="find" && seg[1]==="rooms" && seg[2] ? seg[2] : null;
   const viewingRoom = viewingRoomId!=null ? rooms.find(r => String(r.id)===viewingRoomId) : null;
 
-    // live: keep conversations fresh (fast on the Messages page, slower elsewhere, and on tab focus)
-  const onMessages = page === "messages";
+  // live: one refresher for everything other people can change
   useEffect(() => {
     if (!api.LIVE || !signedIn) return;
-    const refresh = () => { if (!document.hidden) loadConvos(); };
-    const t = setInterval(refresh, onMessages ? 3000 : 12000);
-    document.addEventListener("visibilitychange", refresh);
-    window.addEventListener("focus", refresh);
-    return () => {
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", refresh);
-      window.removeEventListener("focus", refresh);
-    };
-  }, [signedIn, role, onMessages]);
-  
+    const jobs = [
+      { every: page==="messages" ? 3000 : 12000, run: loadConvos },
+      { every: 15000, run: () => loadRequests(role, rooms) },
+      ...(role==="admin" ? [{ every: 15000, run: loadVerifs }] : []),
+      ...(role==="leader" ? [{ every: 15000, run: loadMemberships }] : []),
+      ...(page==="forum" ? [{ every: 15000, run: loadForum }] : []),
+      ...(openRoom ? [{ every: 10000, run: () => loadWaitlist(openRoom) }] : []),
+    ];
+    const guard = f => () => { if (!document.hidden) f(); };
+    const timers = jobs.map(j => setInterval(guard(j.run), j.every));
+    const onVisible = () => jobs.forEach(j => guard(j.run)());
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { timers.forEach(clearInterval); document.removeEventListener("visibilitychange", onVisible); };
+  }, [signedIn, role, page, rooms, openRoom?.id]);
+
   useEffect(() => {
     if (!signedIn || page!=="messages" || activeThread==null) return;
     const t = myThreads.find(x => x.id===activeThread);
@@ -296,6 +299,7 @@ export default function App() {
   const loadForum = async () => {
     try { setPosts((await api.forumPosts()).map(api.adaptPost)); } catch (e) { setApiError(e.message); }
   };
+
   const addPost = async ({ title, body, category, org }) => {
     if (api.LIVE) {
       await api.createPost({ title, body, category, organization_id: orgIds[org] || null });
