@@ -46,9 +46,8 @@ export default function LoadingScreen({ label = "Loading CampusReserve…", inli
       </div>
       <div style={{ fontSize: inline ? 17 : 22, fontWeight: 800, color: 'var(--ink)', marginBottom: 6 }}>{label}</div>
       <div key={i} className="sw-tip" style={{ fontSize: 15, color: 'var(--ink-soft)' }}>{TIPS[i]}</div>
-      {slow && <div style={{ fontSize: 13.5, color: 'var(--ink-faint)', marginTop: 12, maxWidth: 420, marginInline: 'auto' }}>
-        {inline ? "25Live can be slow sometimes. Thanks for hanging in there!"
-          : "The server naps when nobody's been around, so the first load can take up to a minute. Thanks for hanging in there!"}</div>}
+      {slow && <div style={{ fontSize: 13.5, color: 'var(--ink-faint)', marginTop: 12 }}>
+        25Live can be slow sometimes. Thanks for hanging in there!</div>}
     </div>
   );
 }
