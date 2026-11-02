@@ -22,6 +22,7 @@ import { setKnownClubs } from './components/OrgLink.jsx';
 import * as api from './api.js';
 import LoadingScreen from './components/LoadingScreen.jsx';
 import Analytics from './pages/Analytics.jsx';
+import Export25Live from './pages/Export25Live.jsx';
 
 const D = getDays(3);
 const HOME = { leader:"find", admin:"approvals", venue:"rooms" };
@@ -108,17 +109,21 @@ export default function App() {
     } catch (e) { setApiError(e.message); throw e; }
   };
 
-  const loadRequests = async (r, roomList) => {
+  // Fetching and adapting are separate so loadLive can start every request at once.
+  const fetchRequests = async (r) => {
+    if (r==="admin") {
+      const lists = await Promise.all(["pending","approved","denied","waitlisted"].map(s => api.adminRequests(s)));
+      return lists.flat();
+    }
+    return api.myRequests();
+  };
+  const adaptRequests = (raw, roomList) => {
     const byId = Object.fromEntries(roomList.map(x => [x.id, x]));
-    try {
-      let raw;
-      if (r==="admin") {
-        const [p,a,d] = await Promise.all([api.adminRequests("pending"), api.adminRequests("approved"), api.adminRequests("denied")]);
-        const w = await api.adminRequests("waitlisted");
-        raw = [...p,...a,...d,...w];
-      } else raw = await api.myRequests();
-      setRequests(raw.map(x => api.adaptRequest(x, byId)));
-    } catch (e) { setApiError(e.message); }
+    return raw.map(x => api.adaptRequest(x, byId));
+  };
+  const loadRequests = async (r, roomList) => {
+    try { setRequests(adaptRequests(await fetchRequests(r), roomList)); }
+    catch (e) { setApiError(e.message); }
   };
   const loadLive = async (r, user) => {
     setDataLoading(true); setRooms([]); setClubs([]);
@@ -127,14 +132,19 @@ export default function App() {
     setProfiles(p => ({ ...p, [r]: { ...p[r], id:user.id, name:user.name, email:user.email } }));
     setThreads([]); setPosts([]); loadConvos();
     if (r !== "venue") { setPostsLoading(true); loadForum().then(() => setPostsLoading(false)); }
-    let roomList = [];
-    try { roomList = (await api.rooms()).map(api.adaptRoom); setRooms(roomList); }
-    catch (e) { setApiError(e.message); }
-    setRoomsLoading(false);
-    if (r==="leader") await loadMemberships();
-    if (r==="admin") await loadVerifs();
-    await loadRequests(r, roomList);
+    // Start everything at once instead of one call after another. Rooms come from 25Live and are
+    // the slowest, so requests don't wait for them: each request already carries its room's name.
+    const roomsP = api.rooms().then(l => l.map(api.adaptRoom)).catch(e => { setApiError(e.message); return []; });
+    const rawP = fetchRequests(r).catch(e => { setApiError(e.message); return null; });
+    const extraP = r==="leader" ? loadMemberships() : r==="admin" ? loadVerifs() : null;
+    roomsP.then(list => { setRooms(list); setRoomsLoading(false); });
+    const raw = await rawP;
+    if (raw) setRequests(adaptRequests(raw, []));
+    await extraP;
     setDataLoading(false);
+    // When the full room details arrive, swap them into the requests that are already showing.
+    const byId = Object.fromEntries((await roomsP).map(x => [x.id, x]));
+    setRequests(rs => rs.map(q => byId[q.room?.id] ? { ...q, room: byId[q.room.id] } : q));
   };
 
   // returns the picks that failed ([] when every day was requested)
@@ -259,6 +269,7 @@ export default function App() {
     return [t.id, t.messages.slice(n).filter(m => m.fromId !== selfId).length];
   }));
   const unreadTotal = Object.values(unreadMap).reduce((x,y)=>x+y, 0);
+  const pendingCount = role==="admin" ? requests.filter(r => r.status==="pending").length : 0;  // red badge on Approvals
 
   // ---- routing: the URL is the source of truth for which page is showing ----
   const seg = path.split("/").filter(Boolean).map(dec);
@@ -363,10 +374,10 @@ export default function App() {
   return (
     <div>
       <Header role={role} page={page} setPage={goPage}
-        onProfile={()=>goPage("profile")} unread={unreadTotal} verifCount={verifs.length} name={profiles[role].name} onLogout={logout} />
+        onProfile={()=>goPage("profile")} unread={unreadTotal} verifCount={verifs.length} pendingCount={pendingCount} name={profiles[role].name} onLogout={logout} />
       {apiError && <div role="alert" className="app-banner" style={{ maxWidth:900, margin:"14px auto 0", padding:"10px 16px", background:"var(--red-wash)", color:"var(--red)", border:"2px solid var(--red)", borderRadius:10, fontWeight:600, fontSize:14.5 }}>{apiError}</div>}
 
-      {role==="leader" && !dataLoading && memLoaded && leaderOrgs.length===0 && page!=="profile" && (
+      {role==="leader" && memLoaded && leaderOrgs.length===0 && page!=="profile" && (
         <div role="status" className="app-banner" style={{ maxWidth:900, margin:"14px auto 0", padding:"10px 16px", background:"var(--amber-wash)", border:"2px solid var(--amber)",
           borderRadius:10, fontWeight:600, fontSize:14.5, color:"var(--ink)", display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
           <span style={{ flex:1, minWidth:200 }}>Your account is not verified yet, so you can't request bookings.</span>
@@ -378,7 +389,7 @@ export default function App() {
         <ClubProfile name={viewingClub} clubs={clubs} requests={requests} selfId={selfId} onBack={()=>back("/clubs")} onMessagePerson={messagePerson} />
       ) : viewingRoomId!=null ? (
         viewingRoom
-          ? <RoomDetail room={viewingRoom} onBack={()=>back("/find")} onBook={setOpenRoom} role={role} orgs={leaderOrgs} orgIds={orgIds} />
+          ? <RoomDetail room={viewingRoom} onBack={()=>back("/find")} onBook={setOpenRoom} />
           : <main className="page" style={{ maxWidth:900, margin:"0 auto", padding:"24px", fontWeight:600 }}>
               {roomsLoading ? "Loading room…" : <>Room not found. <button onClick={()=>navigate("/find")} style={{ color:"var(--link)", fontWeight:700 }}>Back to search</button></>}
             </main>
@@ -391,6 +402,7 @@ export default function App() {
           {role==="admin" && page==="verifications" && !dataLoading && <Verifications items={verifs} onApprove={approveVerif} onReject={rejectVerif} onOpenClub={openClub} />}
           {role==="admin" && page==="rooms" && <RoomsAdmin rooms={rooms} requests={requests} loading={roomsLoading} />}
           {role==="admin" && page==="analytics" && <Analytics />}
+          {role==="admin" && page==="export" && <Export25Live />}
           {role==="venue" && page==="rooms" && <VenueRooms requests={requests} onOpenClub={openClub} />}
           {(role==="leader" || role==="admin") && page==="forum" && <Forum posts={posts} onPost={addPost} onReply={addReply} clubs={role==="leader" ? leaderOrgs : []} loading={postsLoading} onOpenClub={openClub} />}
           {page==="clubs" && <Clubs clubs={clubs} loading={clubsLoading} onOpenClub={openClub} />}

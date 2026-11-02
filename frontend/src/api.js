@@ -1,5 +1,6 @@
 // Thin client for the CampusReserve FastAPI server.
 // Live mode is ON only when VITE_API_URL is set (see .env.example); otherwise the app runs on mock data.
+import * as demo from './data/mockExport.js'; // demo data if api not connected
 const BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 export const LIVE = !!BASE;
 
@@ -210,3 +211,22 @@ export const adaptPost = p => ({
   id: p.id, author: p.author_name || "Former user", org: p.organization_name || "", category: p.category || "general", title: p.title || "", body: p.body,
   replies: (p.replies || []).map(r => ({ author: r.author_name || "Former user", org: r.organization_name || "", text: r.body })),
 });
+
+// ---- 25Live CSV export (admin) -------------------------------------------
+// Download approved bookings as a file for 25Live's Data Import Tool.
+// Without server connection, these run on demo data: data/mockExport.js.
+export const exportPreview = LIVE ? (includePast = false) => call("/admin/sync/export" + qs({ include_past: includePast || undefined })) : demo.exportPreview;
+export const exportNew = LIVE ? (includePast = false) => call("/admin/sync/export" + qs({ include_past: includePast || undefined }), { method: "POST" }) : demo.exportNew;
+export const exportBatch = LIVE ? id => call(`/admin/sync/batches/${encodeURIComponent(id)}/csv`) : demo.exportBatch;
+export const confirmBatch = LIVE ? id => call(`/admin/sync/batches/${encodeURIComponent(id)}/confirm`, { method: "POST" }) : demo.confirmBatch;
+export const undoBatch = LIVE ? id => call(`/admin/sync/batches/${encodeURIComponent(id)}/undo`, { method: "POST" }) : demo.undoBatch;
+export const cancellationDone = LIVE ? id => call(`/admin/sync/cancellations/${encodeURIComponent(id)}/done`, { method: "POST" }) : demo.cancellationDone;
+
+// Saves text as a file download. No byte-order mark: 25Live wants plain UTF-8.
+export function saveTextFile(filename, text, type = "text/csv;charset=utf-8") {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

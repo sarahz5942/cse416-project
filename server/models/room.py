@@ -228,6 +228,17 @@ class Request(Base):
     )
     external_booking_ref = Column(String(255), nullable=True)  # id returned by 25Live
 
+    # CSV export to 25Live (services/live25_csv.py). Used in place of write access.
+    # Admin will now download approved bookings as a CSV and uploads it using
+    # 25Live's Data Import Tool. exported_at / export_batch_id remember which
+    # bookings are already in a downloaded file so the next file skips them;
+    # cancel_handled_at marks a cancellation the admin has already dealt with in
+    # 25Live. Existing databases need sql/add_export_columns.sql (create_all
+    # can't add columns to a table that already exists).
+    exported_at = Column(DateTime, nullable=True)
+    export_batch_id = Column(String(36), nullable=True, index=True)
+    cancel_handled_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

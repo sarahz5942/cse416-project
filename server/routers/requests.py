@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from datetime import date
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from starlette.concurrency import run_in_threadpool
 
 from authentication import get_current_user
@@ -319,7 +319,7 @@ def list_my_requests(
     """Requests from your organizations, plus any you submitted. Newest first.
     Paginate with ?limit=&offset= (the total is in the X-Total-Count header)."""
     orgs = verified_org_ids(db, user)
-    q = db.query(Request).filter(or_(Request.organization_id.in_(orgs),
+    q = db.query(Request).options(selectinload(Request.room), selectinload(Request.organization), selectinload(Request.requester)).filter(or_(Request.organization_id.in_(orgs),
                                      Request.requester_id == user.id))
     if organization_id:
         q = q.filter(Request.organization_id == as_uuid(organization_id, "organization"))
