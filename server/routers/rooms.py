@@ -30,6 +30,7 @@ from database import get_db
 from models.room import Request, RequestStatus, Room, RoomClosure, SyncStatus
 from models.user import User
 from services import live25, room_features
+from services.pagination import Page, paged
 from services.room_features import RoomFilters
 from services.room_merge import (
     booking_window_open,
@@ -164,12 +165,28 @@ def _count_by_room(db: Session, *conditions) -> dict[str, int]:
     return {_public_id(ref, rid): n for ref, rid, n in rows}
 
 
+def _done_with_db(db: Session) -> None:
+    """Give the database connection back to the pool.
+
+    Call this after a request's last query when it's about to wait on 25Live.
+    Otherwise the connection stays checked out for the whole (sometimes long)
+    25Live call, and a few slow requests can use up the pool's 15 connections,
+    after which every request, even logging in, times out.
+    Ending the transaction with commit (not rollback) keeps anything the request
+    already added, which matters in the tests, where test data isn't committed yet.
+    If the request queries again later, the session checks out a connection again.
+    """
+    db.commit()
+
+
 def _room_list_data(db: Session):
-    return (
+    data = (
         _db_rooms(db),
         _count_by_room(db, Request.status == RequestStatus.PENDING),
         _count_by_room(db, Request.status == RequestStatus.WAITLISTED),
     )
+    _done_with_db(db)
+    return data
 
 
 def _find_room(db: Session, public_id: str) -> Room | None:
@@ -200,6 +217,7 @@ def _request_dict(r: Request) -> dict:
 def _schedule_data(db: Session, public_id: str, start: dt.datetime, end: dt.datetime):
     room = _find_room(db, public_id)
     if room is None:
+        _done_with_db(db)
         return None, [], [], []
 
     # Requests whose blocked window (start/end widened by setup/cleanup)
@@ -233,6 +251,7 @@ def _schedule_data(db: Session, public_id: str, start: dt.datetime, end: dt.date
     closure_dicts = [{"name": c.reason, "start": to_local_naive(c.closed_from),
                       "end": to_local_naive(c.closed_until)} for c in closures]
 
+    _done_with_db(db)
     return room, requests, waitlisted, closure_dicts
 
 
@@ -278,6 +297,7 @@ def _availability_db_data(db: Session, start: dt.datetime, end: dt.datetime):
         ):
             blocked.add(_public_id(ref, rid))
 
+    _done_with_db(db)
     return blocked, pending_counts
 
 
@@ -300,16 +320,28 @@ async def _location_info() -> dict[str, dict]:
         return {}
 
 
+def _raise_first_error(results: list) -> None:
+    """After gather(..., return_exceptions=True): re-raise the first failure,
+    turning a 25Live failure into a 502."""
+    for res in results:
+        if isinstance(res, live25.Live25Error):
+            raise _upstream_error(res)
+        if isinstance(res, BaseException):
+            raise res
+
+
 async def _merged_rooms(db: Session) -> list[dict]:
-    # Fetch 25Live and query our DB at the same time.
-    try:
-        live_rooms, info, (db_rooms, pending, waitlist) = await asyncio.gather(
-            live25.list_spaces(),
-            _location_info(),
-            run_in_threadpool(_room_list_data, db),
-        )
-    except live25.Live25Error as e:
-        raise _upstream_error(e)
+    # Fetch 25Live and query our DB at the same time. Wait for BOTH to finish even
+    # if 25Live fails right away, so the database query never keeps running (and
+    # using the session) after the request has ended.
+    results = await asyncio.gather(
+        live25.list_spaces(),
+        _location_info(),
+        run_in_threadpool(_room_list_data, db),
+        return_exceptions=True,
+    )
+    _raise_first_error(results)
+    live_rooms, info, (db_rooms, pending, waitlist) = results
     for r in live_rooms:
         extra = info.get(r["id"])
         if extra:
@@ -342,17 +374,20 @@ def _filter_rooms(rooms: list[dict], building: str | None, min_capacity: int | N
 
 @router.get("", response_model=list[RoomResponse])
 async def list_rooms(
+    response: Response,
     building: str | None = None,
     min_capacity: int | None = None,
     club_bookable_only: bool = False,
     include_inactive: bool = False,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     current_user: User = Security(get_current_user, scopes=["read:rooms"]),
 ):
-    """List rooms, optionally filtered by building, minimum capacity, or bookability."""
+    """List rooms, optionally filtered by building, minimum capacity, or bookability.
+    Paginate with ?limit=&offset= (the total is in the X-Total-Count header)."""
     rooms = _filter_rooms(await _merged_rooms(db), building, min_capacity,
                           club_bookable_only, include_inactive)
-    return [RoomResponse(**r) for r in rooms]
+    return [RoomResponse(**r) for r in page.items(rooms, response)]
 
 
 def _parse_window(year: int, month: int, day: int,
@@ -375,10 +410,10 @@ async def _available_rooms(db: Session, start: dt.datetime, end: dt.datetime,
     Shared by /available and /search so both use the same availability rules.
     """
     now = campus_now()
-    (all_rooms, (blocked, pending_counts)) = await asyncio.gather(
-        _merged_rooms(db),
-        run_in_threadpool(_availability_db_data, db, start, end),
-    )
+    # One database query at a time: a Session can't be used by two threads at once.
+    # This one is quick; _merged_rooms then queries again while it waits on 25Live.
+    blocked, pending_counts = await run_in_threadpool(_availability_db_data, db, start, end)
+    all_rooms = await _merged_rooms(db)
     picked = pick(all_rooms)
     if inspect.isawaitable(picked):
         picked = await picked
@@ -416,6 +451,7 @@ async def _available_rooms(db: Session, start: dt.datetime, end: dt.datetime,
 # as a room id.
 @router.get("/available", response_model=list[AvailableRoomResponse])
 async def list_available_rooms(
+    response: Response,
     year: int = Query(..., ge=2000, le=2100, examples=[2026]),
     month: int = Query(..., ge=1, le=12, examples=[10]),
     day: int = Query(..., ge=1, le=31, examples=[9]),
@@ -425,6 +461,7 @@ async def list_available_rooms(
     building: str | None = None,
     min_capacity: int | None = None,
     club_bookable_only: bool = False,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     current_user: User = Security(get_current_user, scopes=["read:rooms"]),
 ):
@@ -450,12 +487,13 @@ async def list_available_rooms(
         lambda all_rooms: _filter_rooms(all_rooms, building, min_capacity,
                                         club_bookable_only, include_inactive=False),
     )
-    return [AvailableRoomResponse(**r) for r in rooms]
+    return [AvailableRoomResponse(**r) for r in page.items(rooms, response)]
 
 
 # Must also come before "/{room_id}".
 @router.get("/search", response_model=list[AvailableRoomResponse])
 async def search_rooms(
+    response: Response,
     year: int = Query(..., ge=2000, le=2100, examples=[2026]),
     month: int = Query(..., ge=1, le=12, examples=[10]),
     day: int = Query(..., ge=1, le=31, examples=[9]),
@@ -487,6 +525,7 @@ async def search_rooms(
         "Any other feature tags the room must have. Repeat for several: "
         "&features=projector&features=sink")),
     club_bookable_only: bool = False,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     current_user: User = Security(get_current_user, scopes=["read:rooms"]),
 ):
@@ -542,7 +581,7 @@ async def search_rooms(
     if attendance is not None:
         # Best fit first: the smallest room that holds everyone.
         rooms.sort(key=lambda r: (r.get("capacity") or 0, r["name"]))
-    return [AvailableRoomResponse(**r) for r in rooms]
+    return [AvailableRoomResponse(**r) for r in page.items(rooms, response)]
 
 
 @router.get("/cache-status")
@@ -647,10 +686,12 @@ async def room_photo(
 @router.get("/{room_id}/details", response_model=RoomDetailResponse)
 async def get_room_details(
     room_id: str,
+    db: Session = Depends(get_db),   # the same session the login check used
     current_user: User = Security(get_current_user, scopes=["read:rooms"]),
 ):
     """25Live's details for a room: equipment, categories, hours, the room's
     rules/instructions, location, and the feature tags we derive from them."""
+    await run_in_threadpool(_done_with_db, db)   # nothing else here needs the database
     if not room_id.isdigit():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Only 25Live rooms have 25Live details.")
@@ -713,13 +754,14 @@ async def get_room_schedule(
     async def fetch_live():
         return await live25.get_bookings(room_id, start, end) if is_25live_room else []
 
-    try:
-        live_bookings, (room, requests, waitlisted, closures) = await asyncio.gather(
-            fetch_live(),
-            run_in_threadpool(_schedule_data, db, room_id, window_start, window_end),
-        )
-    except live25.Live25Error as e:
-        raise _upstream_error(e)
+    # Wait for both even if 25Live fails right away (see _merged_rooms).
+    results = await asyncio.gather(
+        fetch_live(),
+        run_in_threadpool(_schedule_data, db, room_id, window_start, window_end),
+        return_exceptions=True,
+    )
+    _raise_first_error(results)
+    live_bookings, (room, requests, waitlisted, closures) = results
 
     if room is None and not is_25live_room:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")

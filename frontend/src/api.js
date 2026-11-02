@@ -1,5 +1,6 @@
 // Thin client for the CampusReserve FastAPI server.
 // Live mode is ON only when VITE_API_URL is set (see .env.example); otherwise the app runs on mock data.
+import * as demo from './data/mockExport.js'; // demo data if api not connected
 const BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 export const LIVE = !!BASE;
 
@@ -19,7 +20,9 @@ function errorMessage(data, status) {
   return `Request failed (${status})`;
 }
 
-async function call(path, { method = "GET", json, form } = {}) {
+// withTotal: true returns { items, total } instead of just the data. `total` comes from the
+// server's X-Total-Count header (set by paginated endpoints: ?limit=&offset=).
+async function call(path, { method = "GET", json, form, withTotal = false } = {}) {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   let body;
@@ -35,8 +38,21 @@ async function call(path, { method = "GET", json, form } = {}) {
     if (res.status === 401 && token && path !== "/auth/token") setToken(null);
     throw new Error(errorMessage(data, res.status));
   }
+  if (withTotal) {
+    const header = res.headers.get("X-Total-Count");
+    return { items: data || [], total: header != null ? Number(header) : (data || []).length };
+  }
   return data;
 }
+
+// Query string for a paginated request, e.g. qs({ search: "dance", limit: 12, offset: 0 }).
+// Empty values are left out.
+const qs = params => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") p.set(k, v);
+  const str = p.toString();
+  return str ? `?${str}` : "";
+};
 
 // ---- auth -------------------------------------------------------------
 export async function login(email, password) {
@@ -54,6 +70,9 @@ export const joinOrg = (id, position_title) =>
   call(`/organizations/${id}/join`, { method: "POST", json: { position_title: position_title || null } });
 export const memberships = () => call("/me/memberships");
 export const orgs = () => call("/organizations");
+// One page of clubs: resolves to { items, total }. e.g. orgsPage({ search: "dance", limit: 12, offset: 0 })
+export const orgsPage = ({ search, limit, offset = 0 } = {}) =>
+  call("/organizations" + qs({ search, limit, offset }), { withTotal: true });
 export const orgDetail = id => call(`/organizations/${id}`);
 export const adaptClub = o => ({ id:o.id, name:o.name, category:null, bio:o.description || "", count:o.verified_member_count || 0, eboard:null, live:true });
 
@@ -61,13 +80,23 @@ export const adaptClub = o => ({ id:o.id, name:o.name, category:null, bio:o.desc
 export const rooms = () => call("/rooms");
 export const roomSchedule = (id, startKey, endKey) =>
   call(`/rooms/${encodeURIComponent(id)}/schedule?start=${startKey}&end=${endKey}`);
+export const buildings = ({ includeLocation = false } = {}) =>
+  call(`/rooms/buildings${includeLocation ? "?include_location=true" : ""}`);
 
-// Rooms that are free for the whole window on one day. dateKey "YYYY-MM-DD", times "HH:MM" (24h).
-const to12 = v => { const [h, m] = v.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
-export const availableRooms = (dateKey, start, end) => {
-  const [y, m, d] = dateKey.split("-").map(Number);
-  return call(`/rooms/available?year=${y}&month=${m}&day=${d}&start_time=${encodeURIComponent(to12(start))}&end_time=${encodeURIComponent(to12(end))}`);
+// Rooms that are free for a whole window. Rooms missing from the list are taken;
+// rooms with overlapping_pending_requests > 0 have another club's request on them.
+export const availableRooms = ({ date, from, to }) => {
+  const [y, m, d] = date.split("-").map(Number);
+  const t12 = v => { const [h, mi] = v.split(":").map(Number); return `${((h + 11) % 12) + 1}:${p2(mi)} ${h < 12 ? "AM" : "PM"}`; };
+  return call(`/rooms/available?year=${y}&month=${m}&day=${d}&start_time=${encodeURIComponent(t12(from))}&end_time=${encodeURIComponent(t12(to))}`);
 };
+
+// ---- room comments ----------------------------------------------------
+export const roomComments = id => call(`/rooms/${encodeURIComponent(id)}/comments`);
+export const postRoomComment = (id, body, organization_id) =>
+  call(`/rooms/${encodeURIComponent(id)}/comments`, { method: "POST", json: { body, organization_id: organization_id || null } });
+export const deleteRoomComment = (id, commentId) =>
+  call(`/rooms/${encodeURIComponent(id)}/comments/${commentId}`, { method: "DELETE" });
 
 // ---- requests ---------------------------------------------------------
 export const myRequests = () => call("/requests/mine");
@@ -184,3 +213,22 @@ export const adaptPost = p => ({
   id: p.id, author: p.author_name || "Former user", org: p.organization_name || "", category: p.category || "general", title: p.title || "", body: p.body,
   replies: (p.replies || []).map(r => ({ author: r.author_name || "Former user", org: r.organization_name || "", text: r.body })),
 });
+
+// ---- 25Live CSV export (admin) -------------------------------------------
+// Download approved bookings as a file for 25Live's Data Import Tool.
+// Without server connection, these run on demo data: data/mockExport.js.
+export const exportPreview = LIVE ? (includePast = false) => call("/admin/sync/export" + qs({ include_past: includePast || undefined })) : demo.exportPreview;
+export const exportNew = LIVE ? (includePast = false) => call("/admin/sync/export" + qs({ include_past: includePast || undefined }), { method: "POST" }) : demo.exportNew;
+export const exportBatch = LIVE ? id => call(`/admin/sync/batches/${encodeURIComponent(id)}/csv`) : demo.exportBatch;
+export const confirmBatch = LIVE ? id => call(`/admin/sync/batches/${encodeURIComponent(id)}/confirm`, { method: "POST" }) : demo.confirmBatch;
+export const undoBatch = LIVE ? id => call(`/admin/sync/batches/${encodeURIComponent(id)}/undo`, { method: "POST" }) : demo.undoBatch;
+export const cancellationDone = LIVE ? id => call(`/admin/sync/cancellations/${encodeURIComponent(id)}/done`, { method: "POST" }) : demo.cancellationDone;
+
+// Saves text as a file download. No byte-order mark: 25Live wants plain UTF-8.
+export function saveTextFile(filename, text, type = "text/csv;charset=utf-8") {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

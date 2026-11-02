@@ -315,7 +315,7 @@ def apply_sync_result(db: Session, req: Request, result: SyncResult) -> None:
                request_id=req.id, email_subject="25Live sync failed")
     elif result.status == SyncStatus.NOT_SYNCED and result.instructions:
         notify(db, admins(db), NotificationType.SYNC_NEEDED,
-               f"Enter in 25Live: {describe(req)}. See GET /admin/sync for the details.",
+               f"Enter in 25Live: {describe(req)}. You can upload a CSV file at the end of the day.",
                request_id=req.id, email_subject="A booking needs entering in 25Live")
     db.flush()
 

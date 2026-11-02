@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from models.room import Request, RequestStatus
 from models.user import User
 from routers.requests import RequestOut, request_out
 from services.booking import BLOCK_END, window_of
+from services.pagination import Page, paged
 from services.permissions import verified_org_ids
 from services.room_import import find_room
 from services.room_merge import campus_now
@@ -38,6 +39,8 @@ class LineEntry(BaseModel):
 
 @router.get("/mine", response_model=list[MyWaitlistEntry])
 def my_waitlist(
+    response: Response,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["read:waitlist"]),
 ):
@@ -47,7 +50,8 @@ def my_waitlist(
             .filter(Request.status == RequestStatus.WAITLISTED,
                     or_(Request.organization_id.in_(orgs), Request.requester_id == user.id),
                     BLOCK_END >= campus_now())
-            .order_by(Request.start_time).all())
+            .order_by(Request.start_time, Request.id))
+    reqs = page.query(reqs, response).all()
     return [MyWaitlistEntry(request=request_out(r), position=r.waitlist_position or 0,
                             ahead_of_you=max((r.waitlist_position or 1) - 1, 0))
             for r in reqs]

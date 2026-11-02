@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ROOMS, THREADS, FORUM_POSTS, PROFILES, CLUBS, PEOPLE, getDays } from './data/mock.js';
 import Header, { NAV } from './components/Header.jsx';
 import { useRoute, enc, dec } from './router.js';
+import CampusMapPage from './pages/CampusMapPage.jsx';
 import FindSpace from './pages/FindSpace.jsx';
 import RoomDetail from './pages/RoomDetail.jsx';
 import BookingDrawer from './pages/BookingDrawer.jsx';
@@ -21,6 +22,7 @@ import { setKnownClubs } from './components/OrgLink.jsx';
 import * as api from './api.js';
 import LoadingScreen from './components/LoadingScreen.jsx';
 import Analytics from './pages/Analytics.jsx';
+import Export25Live from './pages/Export25Live.jsx';
 
 const D = getDays(3);
 const HOME = { leader:"find", admin:"approvals", venue:"rooms" };
@@ -107,17 +109,21 @@ export default function App() {
     } catch (e) { setApiError(e.message); throw e; }
   };
 
-  const loadRequests = async (r, roomList) => {
+  // Fetching and adapting are separate so loadLive can start every request at once.
+  const fetchRequests = async (r) => {
+    if (r==="admin") {
+      const lists = await Promise.all(["pending","approved","denied","waitlisted"].map(s => api.adminRequests(s)));
+      return lists.flat();
+    }
+    return api.myRequests();
+  };
+  const adaptRequests = (raw, roomList) => {
     const byId = Object.fromEntries(roomList.map(x => [x.id, x]));
-    try {
-      let raw;
-      if (r==="admin") {
-        const [p,a,d] = await Promise.all([api.adminRequests("pending"), api.adminRequests("approved"), api.adminRequests("denied")]);
-        const w = await api.adminRequests("waitlisted");
-        raw = [...p,...a,...d,...w];
-      } else raw = await api.myRequests();
-      setRequests(raw.map(x => api.adaptRequest(x, byId)));
-    } catch (e) { setApiError(e.message); }
+    return raw.map(x => api.adaptRequest(x, byId));
+  };
+  const loadRequests = async (r, roomList) => {
+    try { setRequests(adaptRequests(await fetchRequests(r), roomList)); }
+    catch (e) { setApiError(e.message); }
   };
   const loadLive = async (r, user) => {
     setDataLoading(true); setRooms([]); setClubs([]);
@@ -126,14 +132,19 @@ export default function App() {
     setProfiles(p => ({ ...p, [r]: { ...p[r], id:user.id, name:user.name, email:user.email } }));
     setThreads([]); setPosts([]); loadConvos();
     if (r !== "venue") { setPostsLoading(true); loadForum().then(() => setPostsLoading(false)); }
-    let roomList = [];
-    try { roomList = (await api.rooms()).map(api.adaptRoom); setRooms(roomList); }
-    catch (e) { setApiError(e.message); }
-    setRoomsLoading(false);
-    if (r==="leader") await loadMemberships();
-    if (r==="admin") await loadVerifs();
-    await loadRequests(r, roomList);
+    // Start everything at once instead of one call after another. Rooms come from 25Live and are
+    // the slowest, so requests don't wait for them: each request already carries its room's name.
+    const roomsP = api.rooms().then(l => l.map(api.adaptRoom)).catch(e => { setApiError(e.message); return []; });
+    const rawP = fetchRequests(r).catch(e => { setApiError(e.message); return null; });
+    const extraP = r==="leader" ? loadMemberships() : r==="admin" ? loadVerifs() : null;
+    roomsP.then(list => { setRooms(list); setRoomsLoading(false); });
+    const raw = await rawP;
+    if (raw) setRequests(adaptRequests(raw, []));
+    await extraP;
     setDataLoading(false);
+    // When the full room details arrive, swap them into the requests that are already showing.
+    const byId = Object.fromEntries((await roomsP).map(x => [x.id, x]));
+    setRequests(rs => rs.map(q => byId[q.room?.id] ? { ...q, room: byId[q.room.id] } : q));
   };
 
   // returns the picks that failed ([] when every day was requested)
@@ -258,6 +269,7 @@ export default function App() {
     return [t.id, t.messages.slice(n).filter(m => m.fromId !== selfId).length];
   }));
   const unreadTotal = Object.values(unreadMap).reduce((x,y)=>x+y, 0);
+  const pendingCount = role==="admin" ? requests.filter(r => r.status==="pending").length : 0;  // red badge on Approvals
 
   // ---- routing: the URL is the source of truth for which page is showing ----
   const seg = path.split("/").filter(Boolean).map(dec);
@@ -267,21 +279,24 @@ export default function App() {
   const viewingRoomId = seg[0]==="find" && seg[1]==="rooms" && seg[2] ? seg[2] : null;
   const viewingRoom = viewingRoomId!=null ? rooms.find(r => String(r.id)===viewingRoomId) : null;
 
-    // live: keep conversations fresh (fast on the Messages page, slower elsewhere, and on tab focus)
-  const onMessages = page === "messages";
+  // live: one refresher for everything other people can change
   useEffect(() => {
     if (!api.LIVE || !signedIn) return;
-    const refresh = () => { if (!document.hidden) loadConvos(); };
-    const t = setInterval(refresh, onMessages ? 3000 : 12000);
-    document.addEventListener("visibilitychange", refresh);
-    window.addEventListener("focus", refresh);
-    return () => {
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", refresh);
-      window.removeEventListener("focus", refresh);
-    };
-  }, [signedIn, role, onMessages]);
-  
+    const jobs = [
+      { every: page==="messages" ? 3000 : 12000, run: loadConvos },
+      { every: 15000, run: () => loadRequests(role, rooms) },
+      ...(role==="admin" ? [{ every: 15000, run: loadVerifs }] : []),
+      ...(role==="leader" ? [{ every: 15000, run: loadMemberships }] : []),
+      ...(page==="forum" ? [{ every: 15000, run: loadForum }] : []),
+      ...(openRoom ? [{ every: 10000, run: () => loadWaitlist(openRoom) }] : []),
+    ];
+    const guard = f => () => { if (!document.hidden) f(); };
+    const timers = jobs.map(j => setInterval(guard(j.run), j.every));
+    const onVisible = () => jobs.forEach(j => guard(j.run)());
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { timers.forEach(clearInterval); document.removeEventListener("visibilitychange", onVisible); };
+  }, [signedIn, role, page, rooms, openRoom?.id]);
+
   useEffect(() => {
     if (!signedIn || page!=="messages" || activeThread==null) return;
     const t = myThreads.find(x => x.id===activeThread);
@@ -295,6 +310,7 @@ export default function App() {
   const loadForum = async () => {
     try { setPosts((await api.forumPosts()).map(api.adaptPost)); } catch (e) { setApiError(e.message); }
   };
+
   const addPost = async ({ title, body, category, org }) => {
     if (api.LIVE) {
       await api.createPost({ title, body, category, organization_id: orgIds[org] || null });
@@ -358,7 +374,7 @@ export default function App() {
   return (
     <div>
       <Header role={role} page={page} setPage={goPage}
-        onProfile={()=>goPage("profile")} unread={unreadTotal} verifCount={verifs.length} name={profiles[role].name} onLogout={logout} />
+        onProfile={()=>goPage("profile")} unread={unreadTotal} verifCount={verifs.length} pendingCount={pendingCount} name={profiles[role].name} onLogout={logout} />
       {apiError && <div role="alert" className="app-banner" style={{ maxWidth:900, margin:"14px auto 0", padding:"10px 16px", background:"var(--red-wash)", color:"var(--red)", border:"2px solid var(--red)", borderRadius:10, fontWeight:600, fontSize:14.5 }}>{apiError}</div>}
 
       {role==="leader" && memLoaded && leaderOrgs.length===0 && page!=="profile" && (
@@ -386,6 +402,7 @@ export default function App() {
           {role==="admin" && page==="verifications" && !dataLoading && <Verifications items={verifs} onApprove={approveVerif} onReject={rejectVerif} onOpenClub={openClub} />}
           {role==="admin" && page==="rooms" && <RoomsAdmin rooms={rooms} requests={requests} loading={roomsLoading} />}
           {role==="admin" && page==="analytics" && <Analytics />}
+          {role==="admin" && page==="export" && <Export25Live />}
           {role==="venue" && page==="rooms" && <VenueRooms requests={requests} onOpenClub={openClub} />}
           {(role==="leader" || role==="admin") && page==="forum" && <Forum posts={posts} onPost={addPost} onReply={addReply} clubs={role==="leader" ? leaderOrgs : []} loading={postsLoading} onOpenClub={openClub} />}
           {page==="clubs" && <Clubs clubs={clubs} loading={clubsLoading} onOpenClub={openClub} />}
@@ -395,6 +412,8 @@ export default function App() {
             onChangePassword={api.LIVE ? api.changePassword : undefined} />}
           {page==="messages" && <Messages threads={threads} onSend={sendMessage} onStartChat={startChat}
             activeId={activeThread} setActiveId={setActiveThread} selfId={selfId} onSearchPeople={searchPeople} unreadMap={unreadMap} />}
+          {page==="map" && <CampusMapPage rooms={rooms} loading={roomsLoading}
+            onView={role==="leader" ? openRoomDetail : undefined} onBook={role==="leader" ? setOpenRoom : undefined} />}
         </>
       )}
 

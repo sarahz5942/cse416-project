@@ -18,9 +18,14 @@ from database import get_db
 from models.communication import Conversation, ConversationParticipant, Message, NotificationType
 from models.user import User
 from services.notify import notify
+from services.pagination import Page, paged
 from services.permissions import as_uuid
 
 router = APIRouter(tags=["messages"])
+
+# New messages are emailed only when the conversation has been quiet this long, so a
+# back-and-forth chat sends one email instead of one per message.
+EMAIL_QUIET_PERIOD = dt.timedelta(minutes=30)
 
 
 # =============================================================================
@@ -91,6 +96,18 @@ def _load_options():
             selectinload(Conversation.messages).selectinload(Message.sender))
 
 
+def _recently_active(conv: Conversation, now: dt.datetime) -> bool:
+    """True if the conversation's newest message is less than EMAIL_QUIET_PERIOD old."""
+    if not conv.messages:
+        return False
+    last = conv.messages[-1].created_at          # messages are loaded oldest first
+    if last is None:
+        return False
+    if last.tzinfo is None:                      # stored without a time zone: it's UTC
+        last = last.replace(tzinfo=dt.timezone.utc)
+    return now - last < EMAIL_QUIET_PERIOD
+
+
 def _my_conversation(db: Session, user: User, conversation_id: str) -> Conversation:
     """The conversation, or 404 if it doesn't exist or you aren't in it (so a
     stranger can't tell which ids exist)."""
@@ -110,8 +127,9 @@ def _my_conversation(db: Session, user: User, conversation_id: str) -> Conversat
 
 @router.get("/users/search", response_model=list[PersonOut])
 def search_users(
+    response: Response,
     q: str = Query(..., min_length=1, max_length=100, description="Name or email contains"),
-    limit: int = Query(10, ge=1, le=50),
+    page: Page = Depends(paged(default_limit=10, max_limit=50)),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["read:messages"]),
 ):
@@ -123,7 +141,8 @@ def search_users(
             .filter(User.is_active.is_(True), User.id != user.id,
                     or_(func.lower(User.name).contains(term, autoescape=True),
                         func.lower(User.email).contains(term, autoescape=True)))
-            .order_by(User.name).limit(limit).all())
+            .order_by(User.name, User.id))
+    rows = page.query(rows, response).all()
     return [PersonOut(id=str(u.id), name=u.name, email=u.email) for u in rows]
 
 
@@ -133,6 +152,8 @@ def search_users(
 
 @router.get("/conversations", response_model=list[ConversationOut])
 def list_conversations(
+    response: Response,
+    page: Page = Depends(paged()),
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["read:messages"]),
 ):
@@ -142,7 +163,7 @@ def list_conversations(
              .filter(ConversationParticipant.user_id == user.id)
              .options(*_load_options()).all())
     convs.sort(key=lambda c: c.messages[-1].created_at if c.messages else c.created_at, reverse=True)
-    return [conversation_out(c) for c in convs]
+    return [conversation_out(c) for c in page.items(convs, response)]
 
 
 @router.post("/conversations", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
@@ -191,13 +212,16 @@ def send_message(
     db: Session = Depends(get_db),
     user: User = Security(get_current_user, scopes=["send:messages"]),
 ):
-    """Add a message to a conversation you're in. The others get an in-app notification."""
+    """Add a message to a conversation you're in. The others get an in-app notification,
+    and an email too unless the conversation already had a message in the last 30 minutes."""
     conv = _my_conversation(db, user, conversation_id)
+    email_them = not _recently_active(conv, dt.datetime.now(dt.timezone.utc))  # check before adding this message
     msg = Message(conversation_id=conv.id, sender_id=user.id, body=body.body)
     db.add(msg)
     preview = body.body if len(body.body) <= 100 else body.body[:97] + "..."
     notify(db, [p.user for p in conv.participants if p.user_id != user.id],
-           NotificationType.NEW_MESSAGE, f"{user.name}: {preview}", email=False)
+           NotificationType.NEW_MESSAGE, f"{user.name}: {preview}",
+           email=email_them, email_subject=f"New message from {user.name} on CampusReserve")
     db.commit()
     db.refresh(msg)
     return message_out(msg)
