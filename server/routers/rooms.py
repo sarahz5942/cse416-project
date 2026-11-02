@@ -320,16 +320,28 @@ async def _location_info() -> dict[str, dict]:
         return {}
 
 
+def _raise_first_error(results: list) -> None:
+    """After gather(..., return_exceptions=True): re-raise the first failure,
+    turning a 25Live failure into a 502."""
+    for res in results:
+        if isinstance(res, live25.Live25Error):
+            raise _upstream_error(res)
+        if isinstance(res, BaseException):
+            raise res
+
+
 async def _merged_rooms(db: Session) -> list[dict]:
-    # Fetch 25Live and query our DB at the same time.
-    try:
-        live_rooms, info, (db_rooms, pending, waitlist) = await asyncio.gather(
-            live25.list_spaces(),
-            _location_info(),
-            run_in_threadpool(_room_list_data, db),
-        )
-    except live25.Live25Error as e:
-        raise _upstream_error(e)
+    # Fetch 25Live and query our DB at the same time. Wait for BOTH to finish even
+    # if 25Live fails right away, so the database query never keeps running (and
+    # using the session) after the request has ended.
+    results = await asyncio.gather(
+        live25.list_spaces(),
+        _location_info(),
+        run_in_threadpool(_room_list_data, db),
+        return_exceptions=True,
+    )
+    _raise_first_error(results)
+    live_rooms, info, (db_rooms, pending, waitlist) = results
     for r in live_rooms:
         extra = info.get(r["id"])
         if extra:
@@ -742,13 +754,14 @@ async def get_room_schedule(
     async def fetch_live():
         return await live25.get_bookings(room_id, start, end) if is_25live_room else []
 
-    try:
-        live_bookings, (room, requests, waitlisted, closures) = await asyncio.gather(
-            fetch_live(),
-            run_in_threadpool(_schedule_data, db, room_id, window_start, window_end),
-        )
-    except live25.Live25Error as e:
-        raise _upstream_error(e)
+    # Wait for both even if 25Live fails right away (see _merged_rooms).
+    results = await asyncio.gather(
+        fetch_live(),
+        run_in_threadpool(_schedule_data, db, room_id, window_start, window_end),
+        return_exceptions=True,
+    )
+    _raise_first_error(results)
+    live_bookings, (room, requests, waitlisted, closures) = results
 
     if room is None and not is_25live_room:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")

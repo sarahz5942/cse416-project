@@ -590,6 +590,5 @@ def remove_member(
 
 def notify_admins_of_join(db: Session, member: User, org: Organization) -> None:
     notify(db, admins(db), NotificationType.MEMBERSHIP_REQUESTED,
-           f"{member.name} ({member.email}) asked to be verified for {org.name}. "
-           f"Verify at POST /admin/organizations/{org.id}/members/{member.id}/verify.",
+           f"{member.name} ({member.email}) asked to be verified for {org.name}. ",
            email_subject="Membership waiting for verification")
