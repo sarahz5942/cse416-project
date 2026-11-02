@@ -5,12 +5,14 @@ import NavIcon from './NavIcon.jsx';
 
 export const NAV = {
   leader: [["requests","My requests"],["find","Find a space"],["forum","Forum"],["messages","Messages"],["clubs","Clubs"], ["map", "Campus map"]],
-  admin: [["approvals","Approvals"],["verifications","Verifications"],["rooms","Rooms"],["analytics","Analytics"],["forum","Forum"],["messages","Messages"],["clubs","Clubs"], ["map", "Campus map"]],
+  admin: [["approvals","Approvals"],["verifications","Verifications"],["export","25Live"],["rooms","Rooms"],["analytics","Analytics"],["forum","Forum"],["messages","Messages"],["clubs","Clubs"], ["map", "Campus map"]],
   venue: [["rooms","Rooms"],["messages","Messages"],["clubs","Clubs"], ["map", "Campus map"]],
 };
 // Shorter names for the phone tab bar, where each tab is about 75px wide.
-const SHORT = { requests:"Requests", find:"Find", verifications:"Verify", map:"Map" };
+const SHORT = { requests:"Requests", find:"Find", verifications:"Verify", map:"Map", export:"25Live" };
 const TABS_MAX = 5;  // more than this and the extras go under "More"
+
+const labelOf = id => id==="messages" ? "unread" : id==="approvals" ? "pending" : "waiting";
 
 function Badge({ n, label, dot = false }) {
   if (!n) return null;
@@ -35,7 +37,7 @@ export default function Header(props) {
 }
 
 // ---- Desktop: the original top bar --------------------------------------------
-function DesktopHeader({ role, page, setPage, unread = 0, verifCount = 0, name = "", onLogout, onProfile }) {
+function DesktopHeader({ role, page, setPage, unread = 0, verifCount = 0, pendingCount = 0, name = "", onLogout, onProfile }) {
   const nav = NAV[role];
   return (
     <header className="desk-header" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 24px",
@@ -51,6 +53,7 @@ function DesktopHeader({ role, page, setPage, unread = 0, verifCount = 0, name =
               color: page===id ? "var(--ink)" : "var(--ink-faint)",
               background: page===id ? "var(--line-soft)" : "transparent" }}>
               {label}
+              {id==="approvals" && <Badge n={pendingCount} label="pending" />}
               {id==="verifications" && <Badge n={verifCount} label="waiting" />}
               {id==="messages" && <Badge n={unread} label="unread" />}
             </button>
@@ -71,13 +74,13 @@ function DesktopHeader({ role, page, setPage, unread = 0, verifCount = 0, name =
 }
 
 // ---- Phones and tablets: slim top bar + tab bar along the bottom ------------------
-function CompactHeader({ role, page, setPage, unread = 0, verifCount = 0, name = "", onLogout, onProfile }) {
+function CompactHeader({ role, page, setPage, unread = 0, verifCount = 0, pendingCount = 0, name = "", onLogout, onProfile }) {
   const nav = NAV[role];
   const tabs = nav.length > TABS_MAX ? nav.slice(0, TABS_MAX - 1) : nav;
   const extra = nav.length > TABS_MAX ? nav.slice(TABS_MAX - 1) : [];
   const [moreOpen, setMoreOpen] = useState(false);
   const [a11yOpen, setA11yOpen] = useState(false);
-  const count = id => id==="messages" ? unread : id==="verifications" ? verifCount : 0;
+  const count = id => id==="messages" ? unread : id==="verifications" ? verifCount : id==="approvals" ? pendingCount : 0;
   const moreCount = extra.reduce((n, [id]) => n + count(id), 0);
   const moreActive = page==="profile" || extra.some(([id]) => id===page);
 
@@ -111,7 +114,7 @@ function CompactHeader({ role, page, setPage, unread = 0, verifCount = 0, name =
           <button key={id} className="tab" onClick={() => go(id)} aria-current={page===id ? "page" : undefined}>
             <span className="tab-icon"><NavIcon name={id} /><Badge n={count(id)} dot /></span>
             <span className="tab-label">{SHORT[id] || label}</span>
-            {count(id) > 0 && <span className="sr-only">, {count(id)} {id==="messages" ? "unread" : "waiting"}</span>}
+            {count(id) > 0 && <span className="sr-only">, {count(id)} {labelOf(id)}</span>}
           </button>
         ))}
         {extra.length > 0 && (
@@ -145,7 +148,7 @@ function MoreSheet({ items, page, count, onGo, onLogout, onClose }) {
         {[...items, ["profile","My profile"]].map(([id,label]) => (
           <button key={id} className="more-item" onClick={() => onGo(id)} aria-current={page===id ? "page" : undefined}>
             <NavIcon name={id} /><span style={{ flex:1 }}>{label}</span>
-            <Badge n={count(id)} label={id==="messages" ? "unread" : "waiting"} />
+            <Badge n={count(id)} label={labelOf(id)} />
           </button>
         ))}
         <button className="more-item" onClick={onLogout}><NavIcon name="logout" /><span style={{ flex:1 }}>Log out</span></button>
